@@ -1,0 +1,1717 @@
+# Axiom PR Admission — Archright/nim-json-rpc (trusted admission workflow).
+#
+# APPLIED at P6 (2026-11-18) — adapted from the nim-libp2p admission workflow
+# (remote blob sha 3dd2a4f290df61b0c0735164323791102b26a69b, v2 classification
+# generation 2026-11-14). Application-time tokens are resolved: the engine
+# release is v0.6.5 (Archright/axiom-cli) and the jrpc wave-facing carrier is
+# new_errclass_defect. An unresolved token would fail at queue time and prove
+# nothing — see the campaign README §7 runbook for the application order.
+#
+# Placement: this workflow lives in the SUBJECT repository
+# (Archright/nim-json-rpc, repository id 1460084333) because the admission
+# rulesets are REPO-LEVEL — the Archright org is on the free plan (the org
+# rulesets API answers 403 "Upgrade to GitHub Team") and a repo-level
+# ruleset can only reference workflows of the SAME repository. The
+# nim-libp2p precedent places the workflow in Archright/.github and executes
+# it through an org-level ruleset; the repo-level adaptation moves the file
+# into the fork. The precedent's per-job repository guard is KEPT
+# (github.repository == 'Archright/nim-json-rpc') so the file stays inert if
+# copied anywhere else.
+#
+# Trigger topology (precedent unchanged): pull_request is the only trigger —
+# no workflow_dispatch, no push, no repository_dispatch. Campaign-level
+# dispatch tooling is out of scope for this admission file.
+#
+# Subject identity: github.sha of the pull_request event (the PR merge branch
+# commit) is the single authority. A non-empty pull_request.merge_commit_sha
+# that disagrees with github.sha is an identity-uncertainty rejection — there
+# is no head.sha fallback.
+#
+# Resolved tokens (single-purpose; resolved at P6 application, 2026-11-18):
+#   v0.6.5  Axiom engine release tag (vX.Y.Z form; the tag must
+#                      EXIST as an Archright/axiom-cli release). Sites:
+#                      verify-a/verify-b `uses:` refs (2), their
+#                      `axiom-version:` inputs (2), the mutation-contrast
+#                      bundle download input (1), and admission-integrity's
+#                      EXPECTED_AXIOM_VERSION constant (1, v-prefix stripped
+#                      there for AXIOM_VERSION_PLAIN parity with the
+#                      adapter's verify-record.json).
+#   new_errclass_defect   jrpc-errclass wave-facing carrier name (P2 lane,
+#                      workstream/jrpc-errcode-map; confirmed by the P2
+#                      binding test — instance 1 renames to `new`).
+#                      SINGLE injection point: the JRPC_CARRIER env below.
+#                      Substituted into the propositions document id in the
+#                      propositions and mutation-contrast jobs (precedent
+#                      ACCEPTANCE_CLASS env pattern: declared once, read from
+#                      step shells — reusable-workflow `with:` inputs cannot
+#                      see the env context).
+#
+# Replay dependency pins (jrpc-errclass lane, P2/P1 frozen pin set — the
+# FREEZE §13 probe's exact set; pkgs2 triples are the authority):
+#   json_serialization-0.2.9-4062dc791d268930701bdef55b5cc35f82303ad3
+#   serialization-0.2.6-26deca68e1a027be90e2bf2856e25aa819101d1e
+#   stew-0.5.0-db22942939773ab7d5a0f2b2668c237240c67dd6
+#   faststreams-0.3.0-ec2d92793e7d1bd0c30ab29c0d20548a054cfa8e
+#   results-0.5.1-a9c011f74bc9ed5c91103917b9f382b12e82a9e7
+# Passed to the adapter in its CURRENT "owner/repo <full 40-hex>" input
+# format and inlined at three sites (verify-a, verify-b, mutation-contrast)
+# because `jobs.<id>.with.<input>` may reference github/needs/strategy/
+# matrix/inputs/vars contexts only — env is NOT available there. The three
+# literals must be edited together on any pin rotation.
+#
+# Legs: verify-a / verify-b are two SEPARATE jobs calling the pinned reusable
+# workflow Archright/axiom-cli/.github/workflows/ax-verify.yml@v0.6.5
+# so each leg's reusable-workflow outputs are preserved in their own job
+# namespace (a matrix would collapse outputs to the last successful
+# execution). The green legs pin the PR subject (github.sha).
+#
+# mutation-contrast is a NEW leg (not in the nim-libp2p precedent): a
+# self-contained red control for the anti-theater direction. It replays the
+# FREEZE §10 FALSE adoption document (instance 4 / -32600 distorted to tag 0,
+# re-hash-bound to its own content) against the PINNED ORIGINAL constructor
+# (status-im/nim-json-rpc@debf33c…, the overlay's frozen subject pin — NOT
+# the PR merge commit) and asserts ax prove exits 1 (DISPROVED) with the
+# disproof persisted in the proof state. exit 0 means the engine accepted a
+# self-consistent FALSE adoption (vacuous agreement — the admission would be
+# theatrical) and FAILS the run; exit >= 2 is fail-closed as in the adapter.
+# It replicates the adapter's bundle/toolchain/staging steps because the
+# current adapter has no input to override the engine's spec catalog
+# (AXIOM_ROOT swap is the only overlay-injection path at draft time).
+#
+# Fail-closed: admission-integrity and subject-verdict run with !cancelled();
+# a missing record, missing report, or any guard violation is recorded and
+# FAILs the admission — never silently green. The mutation-contrast leg fails
+# at job level (its own assertions); pipeline success and subject verdict
+# remain separate axes exactly as in the precedent.
+#
+# Classification (v2, 2026-11-14): the verdict is computed from persisted
+# engine evidence (ax_proof_state.json, vault-manifest.json), never from the
+# process exit code alone. acceptanceClass is a trusted constant declared in
+# this workflow (the adoption table), NOT injected into proposals.json:
+#   - "law-conformance": exit 0 AND runOutcome.verdict=INCONCLUSIVE AND the
+#     adopted proposition's display verdict=UNKNOWN AND every declaredRequired
+#     unit has a vault record at candidate-or-better status AND census has
+#     >=1 proof candidate / >=1 obligation => LAW_CONFORMANCE_ACCEPTED_
+#     REPRODUCIBLE (candidate-tier evidence; explicitly NOT a formal PROVED
+#     verdict).
+#   - "proof": exit 0 AND verified>0 AND verificationComplete=true AND no
+#     FAIL gate AND no DISPROVED proposition => PROVED_REPRODUCIBLE
+#     (reserved; unreachable until the engine serializes a positive verdict).
+# Exit 0 without the applicable conjuncts => VACUOUS_BLOCKED => FAIL.
+name: Axiom PR Admission (nim-json-rpc)
+
+on:
+  pull_request: {}
+
+permissions:
+  contents: read
+
+env:
+  # new_errclass_defect — the single injection point for the jrpc-errclass
+  # wave-facing carrier name (read from step shells only; never passed
+  # through reusable-workflow `with:` — the env context is not available
+  # there). Unresolved-token guard: the propositions and mutation-contrast
+  # steps reject the literal 'new_errclass_defect'.
+  JRPC_CARRIER: 'new_errclass_defect'
+
+jobs:
+  propositions:
+    if: ${{ github.repository == 'Archright/nim-json-rpc' }}
+    runs-on: ubuntu-24.04
+    outputs:
+      subject_commit: ${{ steps.subject.outputs.sha }}
+      propositions_sha256: ${{ steps.doc.outputs.propositions_sha256 }}
+      acceptance_class: ${{ steps.doc.outputs.acceptance_class }}
+    steps:
+      - name: 'Resolve subject commit (single authority: github.sha)'
+        id: subject
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # Single authority for pull_request admission is GITHUB_SHA (the newly
+          # synthesized refs/pull/<n>/merge commit for [base.sha, head.sha]).
+          # NOTE: github.event.pull_request.merge_commit_sha in synchronize webhook
+          # payloads is a stale snapshot pointing to the PREVIOUS head's merge commit
+          # and is NOT an authority. Instead, enforce that GITHUB_SHA is a valid 40-hex
+          # merge commit distinct from both head.sha and base.sha (no head fallback).
+          SUBJECT="${GITHUB_SHA}"
+          if ! printf '%s' "${SUBJECT}" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "::error::subject commit is not a full 40-hex SHA: '${SUBJECT}'"
+            exit 1
+          fi
+          if [ "${SUBJECT}" = "${HEAD_SHA}" ] || [ "${SUBJECT}" = "${BASE_SHA}" ]; then
+            echo "::error::subject identity uncertain: github.sha '${SUBJECT}' is not a synthesized merge commit (head='${HEAD_SHA}', base='${BASE_SHA}'); head.sha fallback is forbidden"
+            exit 1
+          fi
+          echo "sha=${SUBJECT}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build pinned propositions document
+        id: doc
+        env:
+          SUBJECT_SHA: ${{ steps.subject.outputs.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          ACCEPTANCE_CLASS: 'proof'
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          subject_sha = os.environ["SUBJECT_SHA"]
+          # JRPC_CARRIER is inherited from the workflow-level env — the single
+          # new_errclass_defect injection point. Reject the unresolved token.
+          carrier = os.environ.get("JRPC_CARRIER", "")
+          if not carrier.strip() or carrier == "__JRPC_CARRIER__":
+              print("::error::JRPC_CARRIER is unset or the unresolved token '__JRPC_CARRIER__' — resolve the P2 carrier name before committing this workflow")
+              sys.exit(1)
+          template = '{"schema_version":2,"subject":{"repository":"Archright/nim-json-rpc","commit":"__SUBJECT_SHA__"},"agent":{"id":"pr-admission-pinned","version":"1"},"propositions":[{"id":"errclass-__JRPC_CARRIER__-jrpc-slice","target":"json_rpc/errors.nim::new","specId":"JRPC-ERRCLASS","source_location":{"file":"json_rpc/errors.nim","line":105},"explanation":"Adopted proposition (human adoption record: jrpc-errclass vertical slice, FREEZE experiments/jrpc-errcode-slice-e2e/FREEZE.md, P1 gate 13/13 — workstream/jrpc-errcode-map P2); formal semantics owned by engine spec catalog JRPC-ERRCLASS"}]}'
+          doc = template.replace("__SUBJECT_SHA__", subject_sha).replace("__JRPC_CARRIER__", carrier)
+          parsed = json.loads(doc)
+          propositions = parsed.get("propositions")
+          if not isinstance(propositions, list) or len(propositions) < 1:
+              print("::error::adopted proposition set is empty (minimum requirement: at least one proposition)")
+              sys.exit(1)
+          with open("proposals.json", "w", encoding="utf-8") as handle:
+              handle.write(doc)
+          with open("propositions-summary.md", "w", encoding="utf-8") as handle:
+              handle.write("| proposition id | specId |\n")
+              handle.write("| --- | --- |\n")
+              for proposition in propositions:
+                  handle.write(f"| {proposition.get('id')} | {proposition.get('specId')} |\n")
+          print(f"subject_commit={subject_sha}")
+          for proposition in propositions:
+              print(f"proposition id={proposition.get('id')} specId={proposition.get('specId')}")
+          PY
+          python3 -m json.tool proposals.json > /dev/null
+          SHA256_SUM="$(sha256sum proposals.json)"
+          SHA256="$(printf '%s' "${SHA256_SUM}" | awk '{print $1}')"
+          echo "propositions_sha256=${SHA256}" >> "${GITHUB_OUTPUT}"
+          echo "acceptance_class=${ACCEPTANCE_CLASS}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "## Axiom PR Admission — propositions (pinned)"
+            echo ""
+            echo "- PR number: #${PR_NUMBER}"
+            echo "- head.sha: \`${HEAD_SHA}\`"
+            echo "- base.sha: \`${BASE_SHA}\`"
+            echo "- subject commit (github.sha): \`${SUBJECT_SHA}\`"
+            echo "- propositions_sha256: \`${SHA256}\`"
+            echo ""
+            cat propositions-summary.md
+            echo ""
+            echo '```'
+            printf '%s\n' "${SHA256_SUM}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Upload propositions artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: propositions
+          path: proposals.json
+          if-no-files-found: error
+
+  verify-a:
+    if: ${{ github.repository == 'Archright/nim-json-rpc' }}
+    needs: propositions
+    # v0.6.5 (site 1/6): the reusable adapter ref — a SHA or tag;
+    # the tag form is pinned here because the engine release tag is the
+    # authority the adapter itself downloads and verifies.
+    uses: Archright/axiom-cli/.github/workflows/ax-verify.yml@v0.6.5
+    with:
+      # v0.6.5 (site 2/6): adapter normalizes to the vX.Y.Z tag.
+      axiom-version: 'v0.6.5'
+      subject-repository: 'Archright/nim-json-rpc'
+      subject-commit: '${{ needs.propositions.outputs.subject_commit }}'
+      proposals-artifact: 'propositions'
+      # jrpc-errclass replay deps (pkgs2 triples in the header are the
+      # authority; adapter input format is "owner/repo <40-hex>" per line).
+      # Inlined site 1/3 of the pin literal — keep the three sites in sync.
+      replay-dep-pins: |
+        status-im/nim-json-serialization 6eadb6e939ffa7882ff5437033c11a9464d3385c
+        status-im/nim-serialization 2086c99608b4bf472e1ef5fe063710f280243396
+        status-im/nim-stew 4382b18f04b3c43c8409bfcd6b62063773b2bbaa
+        status-im/nim-faststreams 2b08c774afaafd600cf4c6f994cf78b8aa090c0c
+        arnetheduck/nim-results df8113dda4c2d74d460a8fa98252b0b771bf1f27
+      run-label: 'A'
+
+  verify-b:
+    if: ${{ github.repository == 'Archright/nim-json-rpc' }}
+    needs: propositions
+    # v0.6.5 (site 3/6): see verify-a.
+    uses: Archright/axiom-cli/.github/workflows/ax-verify.yml@v0.6.5
+    with:
+      # v0.6.5 (site 4/6): see verify-a.
+      axiom-version: 'v0.6.5'
+      subject-repository: 'Archright/nim-json-rpc'
+      subject-commit: '${{ needs.propositions.outputs.subject_commit }}'
+      proposals-artifact: 'propositions'
+      # Inlined site 2/3 of the pin literal — keep the three sites in sync.
+      replay-dep-pins: |
+        status-im/nim-json-serialization 6eadb6e939ffa7882ff5437033c11a9464d3385c
+        status-im/nim-serialization 2086c99608b4bf472e1ef5fe063710f280243396
+        status-im/nim-stew 4382b18f04b3c43c8409bfcd6b62063773b2bbaa
+        status-im/nim-faststreams 2b08c774afaafd600cf4c6f994cf78b8aa090c0c
+        arnetheduck/nim-results df8113dda4c2d74d460a8fa98252b0b771bf1f27
+      run-label: 'B'
+
+  mutation-contrast:
+    # NEW red control (not in the nim-libp2p precedent). Self-contained: no
+    # `needs:` — it starts in parallel with the green legs and pins its own
+    # subject (the frozen original constructor, NOT the PR merge commit),
+    # its own propositions document and its own (mutated) engine bundle copy.
+    if: ${{ github.repository == 'Archright/nim-json-rpc' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    steps:
+      - name: 'Validate contract inputs (fail-closed pins)'
+        env:
+          # v0.6.5 (site 5/6): the mutation leg acquires the SAME
+          # engine release as the green legs — normalized below exactly as
+          # the adapter does (v-prefix + ^v\d+\.\d+\.\d+$ + length gate).
+          AXIOM_VERSION_RAW: 'v0.6.5'
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::validate: $1" >&2; exit 1; }
+          # fixed control subject — the overlay's frozen pin, not a PR input
+          SUBJECT_REPOSITORY='status-im/nim-json-rpc'
+          SUBJECT_COMMIT='debf33cabf7be009a2e905d4c7921b85eb7ca6dd'
+          check_sha() {
+            printf '%s' "$1" | grep -Eq '^[0-9a-fA-F]{40}$' \
+              || fail "$2 must be a full 40-hex commit SHA (got '$1')"
+          }
+          check_slug() {
+            printf '%s' "$1" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' \
+              || fail "$2 must be an owner/repo slug (got '$1')"
+          }
+          check_sha "$SUBJECT_COMMIT" 'subject-commit'
+          check_slug "$SUBJECT_REPOSITORY" 'subject-repository'
+          # axiom-version: strip whitespace, v-prefix normalization, semver shape
+          # (adapter validate parity — release-ship ④: ^v\d+\.\d+\.\d+$)
+          VERSION_NORM="$(printf '%s' "$AXIOM_VERSION_RAW" | tr -d '[:space:]')"
+          case "$VERSION_NORM" in v*) ;; *) VERSION_NORM="v$VERSION_NORM" ;; esac
+          printf '%s' "$VERSION_NORM" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+            || fail "axiom-version '$AXIOM_VERSION_RAW' does not normalize to ^v[0-9]+.[0-9]+.[0-9]+ (got '$VERSION_NORM')"
+          [ "${#VERSION_NORM}" -le 100 ] || fail "axiom-version length ${#VERSION_NORM} > 100"
+          # replay-dep-pins are validated line-by-line in the staging step
+          # (the pin literal lives there — inlined site 3/3 of the pins).
+          {
+            echo "AXIOM_VERSION_NORM=$VERSION_NORM"
+            echo "AXIOM_VERSION_PLAIN=${VERSION_NORM#v}"
+          } >> "$GITHUB_ENV"
+          echo "validate: OK — version=$VERSION_NORM subject=$SUBJECT_REPOSITORY@$SUBJECT_COMMIT (frozen pin)"
+
+      - name: 'Acquire + verify release bundle (checksums, attestation, manifest binding)'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # gh repo context for `gh attestation verify` (workspace holds no git repo here);
+          # the attestation was produced by release-ship in the Axiom source repository.
+          GH_REPO: Archright/Axiom
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::bundle: $1" >&2; exit 1; }
+          rel="${RUNNER_TEMP}/ax-release"
+          evidence="${RUNNER_TEMP}/mutation-evidence"
+          mkdir -p "$rel" "$evidence"
+          # libpcre3 FIRST: ax loads libpcre.so.3 at startup (README runtime
+          # requirements) and the bare runner image omits it — `./ax --version`
+          # below cannot run without it.
+          if ! ldconfig -p 2>/dev/null | grep -q 'libpcre\.so'; then
+            sudo apt-get -o DPkg::Lock::Timeout=300 update -qq \
+              && sudo apt-get -o DPkg::Lock::Timeout=300 install -y -qq libpcre3
+          fi
+          ldconfig -p | grep 'libpcre\.so\.3' >/dev/null \
+            || fail 'libpcre.so.3 absent after install'
+          # jq for manifest parsing (GitHub-hosted images carry it — fail-closed re-check)
+          command -v jq >/dev/null 2>&1 || {
+            sudo apt-get -o DPkg::Lock::Timeout=300 update -qq
+            sudo apt-get -o DPkg::Lock::Timeout=300 install -y -qq jq
+          }
+          command -v jq >/dev/null 2>&1 || fail 'jq unavailable'
+          gh release download "$AXIOM_VERSION_NORM" -R Archright/axiom-cli --dir "$rel" --clobber \
+            || fail "gh release download $AXIOM_VERSION_NORM from Archright/axiom-cli failed (is the release published?)"
+          cd "$rel"
+          for f in SHA256SUMS manifest.json attestation-bundle.jsonl; do
+            [ -f "$f" ] || fail "release asset '$f' missing"
+          done
+          BUNDLE_TAR="$(ls axiom-bundle-*.tar.gz 2>/dev/null | head -1)"
+          [ -n "$BUNDLE_TAR" ] || fail 'no axiom-bundle-*.tar.gz asset in the release'
+          sha256sum -c SHA256SUMS || fail 'SHA256SUMS verification failed'
+          # provenance: offline bundle verification, signer pinned to the Axiom
+          # source repo (§1b trust model — README consumption contract)
+          gh attestation verify "$BUNDLE_TAR" -R Archright/Axiom --bundle attestation-bundle.jsonl --signer-repo Archright/Axiom \
+            || fail 'gh attestation verify failed (signer-repo Archright/Axiom)'
+          mkdir -p "${RUNNER_TEMP}/ax-bundle"
+          tar -xzf "$BUNDLE_TAR" -C "${RUNNER_TEMP}/ax-bundle" || fail 'tar extraction failed'
+          anchor_count="$(find "${RUNNER_TEMP}/ax-bundle" -name '.axiom_root' | wc -l)"
+          [ "$anchor_count" -eq 1 ] \
+            || fail "expected exactly one .axiom_root anchor in the bundle, found $anchor_count"
+          BUNDLE_ROOT="$(dirname "$(find "${RUNNER_TEMP}/ax-bundle" -name '.axiom_root' -type f | head -1)")"
+          [ -f "$BUNDLE_ROOT/ax" ] || fail "ax binary missing at the bundle root ($BUNDLE_ROOT)"
+          # manifest binding: every axis must match the observed bytes and the input
+          BUNDLE_SHA="$(sha256sum "$BUNDLE_TAR" | cut -d' ' -f1)"
+          BIN_SHA="$(sha256sum "$BUNDLE_ROOT/ax" | cut -d' ' -f1)"
+          m="$rel/manifest.json"
+          jq -e --arg sv 'axiom.release-bundle.manifest.v1' '.schemaVersion == $sv' "$m" >/dev/null \
+            || fail 'manifest schemaVersion is not axiom.release-bundle.manifest.v1'
+          jq -e --arg p 'linux-x86_64' '.platform == $p' "$m" >/dev/null \
+            || fail 'manifest platform is not linux-x86_64'
+          jq -e --arg t "$AXIOM_VERSION_NORM" '.tag == $t' "$m" >/dev/null \
+            || fail "manifest tag != $AXIOM_VERSION_NORM"
+          jq -e --arg v "$AXIOM_VERSION_PLAIN" '.version == $v' "$m" >/dev/null \
+            || fail "manifest version != $AXIOM_VERSION_PLAIN"
+          jq -e --arg bt "$BUNDLE_TAR" '.bundlePath == $bt' "$m" >/dev/null \
+            || fail 'manifest bundlePath does not match the downloaded asset name'
+          jq -e --arg bs "$BUNDLE_SHA" '.bundleSha256 == $bs' "$m" >/dev/null \
+            || fail "manifest bundleSha256 != observed sha256 ($BUNDLE_SHA)"
+          jq -e --arg ns "$BIN_SHA" '.binarySha256 == $ns' "$m" >/dev/null \
+            || fail "manifest binarySha256 != observed ax sha256 ($BIN_SHA)"
+          # real execution: the bundle binary must run at the bundle root
+          version_out="$(cd "$BUNDLE_ROOT" && AXIOM_ROOT="$BUNDLE_ROOT" ./ax --version)" \
+            || fail 'ax --version execution failed at the bundle root'
+          version_out="$(printf '%s\n' "$version_out" | head -1 | tr -d '[:space:]')"
+          [ "$version_out" = "$AXIOM_VERSION_NORM" ] \
+            || fail "ax --version '$version_out' != $AXIOM_VERSION_NORM"
+          cp "$m" "$evidence/manifest.json"
+          cp SHA256SUMS "$evidence/SHA256SUMS"
+          printf 'ax --version: %s\n' "$version_out" > "$evidence/ax-version.txt"
+          {
+            echo "AXIOM_BUNDLE_ROOT=$BUNDLE_ROOT"
+            echo "AXIOM_BUNDLE_SHA256=$BUNDLE_SHA"
+            echo "AXIOM_TARBALL_NAME=$BUNDLE_TAR"
+          } >> "$GITHUB_ENV"
+          echo "bundle: OK — root=$BUNDLE_ROOT"
+          echo "bundle: bundleSha256=$BUNDLE_SHA binarySha256=$BIN_SHA ax --version=$version_out"
+
+      - name: 'Checkout pinned subject into ./subject (Zero-Footprint)'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # the frozen control subject: the ORIGINAL upstream constructor the
+          # overlay pins (status-im/nim-json-rpc@debf33c… — the fork's master
+          # tip is byte-identical at this commit). NOT the PR merge commit.
+          repository: status-im/nim-json-rpc
+          ref: debf33cabf7be009a2e905d4c7921b85eb7ca6dd
+          path: subject
+          persist-credentials: false
+
+      - name: 'Re-assert the subject HEAD pin'
+        env:
+          SUBJECT_REPOSITORY: 'status-im/nim-json-rpc'
+          SUBJECT_COMMIT: 'debf33cabf7be009a2e905d4c7921b85eb7ca6dd'
+        run: |
+          set -euo pipefail
+          head="$(git -C subject rev-parse HEAD)"
+          [ "$head" = "$SUBJECT_COMMIT" ] \
+            || { echo "::error::subject HEAD '$head' != pinned '$SUBJECT_COMMIT'"; exit 1; }
+          echo "subject: $SUBJECT_REPOSITORY@$head"
+
+      - name: 'Pre fingerprint (subject tree baseline, porcelain clean)'
+        id: fingerprint-pre
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::pre-fingerprint: $1" >&2; exit 1; }
+          evidence="${RUNNER_TEMP}/mutation-evidence"
+          pre_tree="$(git -C subject rev-parse 'HEAD^{tree}')"
+          [ -n "$pre_tree" ] || fail 'HEAD^{tree} resolved empty'
+          porcelain="$(git -C subject status --porcelain)"
+          [ -z "$porcelain" ] \
+            || fail "subject tree is dirty at pre-fingerprint: $porcelain"
+          printf '%s\n' "$pre_tree" > "$evidence/pre_tree_hash.txt"
+          echo "PRE_TREE_HASH=$pre_tree" >> "$GITHUB_ENV"
+          echo "pre-tree=$pre_tree" >> "$GITHUB_OUTPUT"
+          echo "pre fingerprint: tree=$pre_tree porcelain=clean"
+
+      - name: 'Observe runner image (labels + context; failures stated, never masked)'
+        id: runner-image
+        run: |
+          set -euo pipefail
+          imgos="${ImageOS:-}"
+          imgver="${ImageVersion:-}"
+          if [ -n "$imgos" ] && [ -n "$imgver" ]; then
+            runner_image="${imgos}/${imgver}"
+            runner_image_source='env:ImageOS/ImageVersion'
+          else
+            runner_image="unknown:ImageOS=${imgos:-unset}/ImageVersion=${imgver:-unset}"
+            runner_image_source='env:ImageOS/ImageVersion (missing)'
+          fi
+          echo "runner-image=$runner_image" >> "$GITHUB_OUTPUT"
+          {
+            echo "RUNNER_IMAGE=$runner_image"
+            echo "RUNNER_IMAGE_SOURCE=$runner_image_source"
+          } >> "$GITHUB_ENV"
+          {
+            echo "runner_image=$runner_image"
+            echo "runner_image_source=$runner_image_source"
+            echo "runner_os=${RUNNER_OS:-unset}"
+            echo "runner_arch=${RUNNER_ARCH:-unset}"
+            echo "imageos=${imgos:-unset}"
+            echo "imageversion=${imgver:-unset}"
+          } > "${RUNNER_TEMP}/mutation-evidence/runner-image.txt"
+          echo "runner image: $runner_image ($runner_image_source) os=${RUNNER_OS:-unset} arch=${RUNNER_ARCH:-unset}"
+
+      - name: 'Provision pinned toolchain directly (libpcre3, Nim tarball, Z3, elan/Lean)'
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::toolchain: $1" >&2; exit 1; }
+          evidence="${RUNNER_TEMP}/mutation-evidence"
+          # libpcre3 — installed in the bundle step; idempotent re-check + version record
+          if ! ldconfig -p 2>/dev/null | grep -q 'libpcre\.so'; then
+            sudo apt-get -o DPkg::Lock::Timeout=300 update -qq \
+              && sudo apt-get -o DPkg::Lock::Timeout=300 install -y -qq libpcre3
+          fi
+          ldconfig -p | grep 'libpcre\.so\.3' >/dev/null || fail 'libpcre.so.3 absent'
+          LIBPCRE3_VERSION="$(dpkg-query -W -f='${Version}' libpcre3 2>/dev/null || true)"
+          [ -n "$LIBPCRE3_VERSION" ] || fail 'dpkg-query could not observe the libpcre3 version'
+          # Nim 2.2.10 — S4 decision: direct official tarball, NO choosenim.
+          # sha256 pinned from the official checksum file:
+          #   https://nim-lang.org/download/nim-2.2.10-linux_x64.tar.xz.sha256
+          #   0a3a38752e97e9d44aa479b3a7b37336dfe0176daf22ee5b5218ad0991ecd211
+          NIM_SHA256=0a3a38752e97e9d44aa479b3a7b37336dfe0176daf22ee5b5218ad0991ecd211
+          nimdir="${RUNNER_TEMP}/nim-2.2.10"
+          curl -sSfL --retry 4 --retry-all-errors --retry-delay 2 \
+            --connect-timeout 3 --max-time 600 \
+            'https://nim-lang.org/download/nim-2.2.10-linux_x64.tar.xz' \
+            -o "${RUNNER_TEMP}/nim-2.2.10-linux_x64.tar.xz" \
+            || fail 'Nim 2.2.10 linux_x64 tarball download failed'
+          printf '%s  %s\n' "$NIM_SHA256" "${RUNNER_TEMP}/nim-2.2.10-linux_x64.tar.xz" | sha256sum -c - \
+            || fail "Nim tarball sha256 mismatch (pinned $NIM_SHA256)"
+          mkdir -p "$nimdir"
+          tar -xJf "${RUNNER_TEMP}/nim-2.2.10-linux_x64.tar.xz" -C "$nimdir" --strip-components=1 \
+            || fail 'Nim tarball extraction failed'
+          # fail-closed: replay-harness compilation needs the full compiler tree
+          [ -f "$nimdir/compiler/ast.nim" ] || fail 'Nim compiler sources missing after extraction'
+          "$nimdir/bin/nim" -v | head -1
+          echo "$nimdir/bin" >> "$GITHUB_PATH"
+          # Z3 4.13.3 — pinned release binary (setup-axiom-toolchain recipe, x64 asset;
+          # ax executes z3 as a subprocess — resolveZ3Path priority: env, ~/.local/bin, PATH)
+          [ "$(uname -m)" = 'x86_64' ] \
+            || fail "expected x86_64 on the pinned ubuntu-24.04 image, got $(uname -m)"
+          curl -sSfL 'https://github.com/Z3Prover/z3/releases/download/z3-4.13.3/z3-4.13.3-x64-glibc-2.35.zip' -o /tmp/z3.zip \
+            || fail 'Z3 4.13.3 download failed'
+          unzip -q -o /tmp/z3.zip -d /tmp/z3 || fail 'Z3 unzip failed'
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 /tmp/z3/z3-*/bin/z3 "$HOME/.local/bin/z3" || fail 'Z3 install failed'
+          rm -rf /tmp/z3 /tmp/z3.zip
+          "$HOME/.local/bin/z3" --version | grep -q '4\.13\.3' \
+            || fail 'z3 version is not 4.13.3'
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          # elan + Lean 4.33.0 (Axiom repo lean-toolchain pin: leanprover/lean4:v4.33.0)
+          curl -sSfL 'https://elan.lean-lang.org/elan-init.sh' -o "${RUNNER_TEMP}/elan-init.sh" \
+            || fail 'elan-init.sh download failed'
+          chmod +x "${RUNNER_TEMP}/elan-init.sh"
+          "${RUNNER_TEMP}/elan-init.sh" -y --default-toolchain leanprover/lean4:v4.33.0 \
+            || fail 'elan install failed'
+          # functional probe: a corrupt-but-present Lake.olean passes [ -f ] —
+          # lean must actually import Lake (incident 35678120915)
+          probe="$(mktemp -d)"
+          printf 'leanprover/lean4:v4.33.0\n' > "$probe/lean-toolchain"
+          printf 'import Lake\n' > "$probe/Probe.lean"
+          ( cd "$probe" && "$HOME/.elan/bin/lean" Probe.lean >/dev/null 2>&1 ) \
+            || fail 'Lake module unusable after elan install'
+          rm -rf "$probe"
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          # version observations (recorded, never trusted)
+          {
+            echo "nim=$("$nimdir/bin/nim" -v | head -1)"
+            echo "z3=$("$HOME/.local/bin/z3" --version)"
+            echo "lean=$("$HOME/.elan/bin/lean" --version 2>&1 | head -1)"
+            echo "libpcre3=$LIBPCRE3_VERSION"
+            echo "jq=$(jq --version)"
+          } > "$evidence/toolchain-versions.txt"
+          cat "$evidence/toolchain-versions.txt"
+
+      - name: 'Stage pinned replay dependencies (AXIOM_REPLAY_DEP_PATHS — engine design (b))'
+        env:
+          # jrpc-errclass replay deps — inlined site 3/3 of the pin literal
+          # (verify-a/verify-b carry the other two; keep the three in sync).
+          DEP_PINS: |
+            status-im/nim-json-serialization 6eadb6e939ffa7882ff5437033c11a9464d3385c
+            status-im/nim-serialization 2086c99608b4bf472e1ef5fe063710f280243396
+            status-im/nim-stew 4382b18f04b3c43c8409bfcd6b62063773b2bbaa
+            status-im/nim-faststreams 2b08c774afaafd600cf4c6f994cf78b8aa090c0c
+            arnetheduck/nim-results df8113dda4c2d74d460a8fa98252b0b771bf1f27
+        run: |
+          set -euo pipefail
+          deps="${RUNNER_TEMP}/ax-deps"
+          mkdir -p "$deps"
+          paths=""
+          while IFS=' ' read -r slug sha; do
+            [ -n "$slug" ] || continue
+            printf '%s' "$slug" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || {
+              echo "::error::replay-dep-pins entry is not owner/repo: '$slug'"; exit 1; }
+            printf '%s' "$sha" | grep -Eq '^[0-9a-fA-F]{40}$' || {
+              echo "::error::replay-dep-pins sha for $slug is not a full 40-hex commit (pin contract): '$sha'"; exit 1; }
+            name="${slug##*/}"
+            dest="$deps/$name"
+            if [ ! -d "$dest" ]; then
+              git clone --quiet "https://github.com/$slug" "$dest"
+            fi
+            git -C "$dest" checkout --quiet "$sha"
+            echo "staged replay dep: $slug @ $sha"
+            paths="${paths:+$paths:}$dest"
+          done < <(printf '%s\n' "$DEP_PINS")
+          if [ -n "$paths" ]; then
+            echo "AXIOM_REPLAY_DEP_PATHS=$paths" >> "$GITHUB_ENV"
+          else
+            echo 'no replay-dep-pins — engine falls back to nimble store discovery (design (a))'
+          fi
+
+      - name: 'Generate the FREEZE §10 false adoption document (mutated overlay + bundle copy)'
+        env:
+          HONEST_OVERLAY_PATH: ${{ env.AXIOM_BUNDLE_ROOT }}/config/spec/json_rpc_errcode_class.json
+          SUBJECT_REPOSITORY: 'status-im/nim-json-rpc'
+          SUBJECT_COMMIT: 'debf33cabf7be009a2e905d4c7921b85eb7ca6dd'
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::false-adoption: $1" >&2; exit 1; }
+          evidence="${RUNNER_TEMP}/mutation-evidence"
+          mkdir -p "$evidence"
+          export MUTATION_EVIDENCE_DIR="$evidence"
+          # The HONEST overlay ships inside the engine bundle's spec catalog —
+          # the same catalog the green legs' engine resolves JRPC-ERRCLASS
+          # from (the v0.6.5 ship must carry it; see README REVIEW items).
+          [ -f "$HONEST_OVERLAY_PATH" ] \
+            || fail "engine spec catalog overlay missing in the bundle: $HONEST_OVERLAY_PATH (does the shipped engine carry config/spec/json_rpc_errcode_class.json?)"
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import sys
+
+          def fail(msg):
+              print(f"::error::false-adoption: {msg}")
+              sys.exit(1)
+
+          honest_path = os.environ["HONEST_OVERLAY_PATH"]
+          evidence = os.environ["MUTATION_EVIDENCE_DIR"]
+
+          with open(honest_path, encoding="utf-8") as handle:
+              doc = json.load(handle)
+
+          if doc.get("specId") != "JRPC-ERRCLASS":
+              fail(f"bundle overlay specId {doc.get('specId')!r} != 'JRPC-ERRCLASS' — wrong catalog document")
+          if doc.get("specOrigin") != "soExplicit":
+              fail(f"specOrigin {doc.get('specOrigin')!r} != 'soExplicit' — the specIdentity formula's origin constant is fixed for soExplicit")
+          instances = doc.get("instances")
+          ir = doc.get("canonicalSpecIR")
+          adoption = doc.get("adoption")
+          if not isinstance(instances, list) or len(instances) <= 3:
+              fail(f"instances is not a list with more than 3 entries: {instances!r}")
+          if not isinstance(ir, list) or len(ir) <= 15:
+              fail(f"canonicalSpecIR is not a list with more than 15 entries: {ir!r}")
+          if not isinstance(adoption, dict):
+              fail("adoption block missing from the bundle overlay")
+          rule_version = doc.get("ruleVersion")
+          if not isinstance(rule_version, str) or not rule_version:
+              fail("ruleVersion missing from the bundle overlay")
+
+          # FREEZE §10 anchor guards: the mutation recipe is index-addressed
+          # (instances[3], canonicalSpecIR[14..15]) — assert the CONTENT it
+          # expects before touching it. The specific generation hash
+          # (c6ddc32e…) is deliberately NOT asserted: P2 may still ship a
+          # later generation; only the document's OWN self-consistency is
+          # asserted here.
+          inst3 = instances[3]
+          if inst3.get("code") != -32600 or inst3.get("expectedClass") != "RpcInvalidRequestError":
+              fail(f"instances[3] is not the FREEZE §10 anchor (code -32600 / RpcInvalidRequestError): {inst3!r}")
+          if ir[14] != "code == -32600" or ir[15] != "result == 1":
+              fail(f"canonicalSpecIR[14..15] is not the instance-4 pair ('code == -32600', 'result == 1'): {ir[14]!r}, {ir[15]!r}")
+
+          def spec_identity(ir_clauses):
+              # sha256('|'.join(sorted(canonicalSpecIR)) + '|<soExplicit=0>|' + ruleVersion)
+              # — P2-verified against the committed overlay generation.
+              return hashlib.sha256(
+                  ("|".join(sorted(ir_clauses)) + "|0|" + rule_version).encode()
+              ).hexdigest()
+
+          declared = adoption.get("adoptedSpecHash")
+          honest_identity = spec_identity(ir)
+          if declared != honest_identity:
+              fail(f"the honest overlay is not self-consistent (declared {declared!r} != recomputed {honest_identity!r}) — the bundle catalog document is tampered or a different generation")
+
+          # --- the FREEZE §10 false adoption (falseAdoptionNode recipe) ---
+          # instance 4 (-32600) distorted to tag 0, stated self-consistently
+          # (instance block AND canonicalSpecIR agree) and hash-bound to ITS
+          # OWN content. The loader accepts it — model<->instance consistency
+          # is deliberately unvalidated; the replay observation exposes it.
+          doc["instances"][3]["expectedClass"] = "RpcParseError"
+          doc["canonicalSpecIR"][15] = "result == 0"
+          false_identity = spec_identity(doc["canonicalSpecIR"])
+          if false_identity == honest_identity:
+              fail("the mutation did not change the spec identity — the false document would be indistinguishable from the honest one")
+          doc["adoption"]["adoptedSpecHash"] = false_identity
+
+          with open(f"{evidence}/false-overlay.json", "w", encoding="utf-8") as handle:
+              json.dump(doc, handle, indent=2)
+              handle.write("\n")
+          with open(honest_path, encoding="utf-8") as handle:
+              honest_bytes = handle.read()
+          with open(f"{evidence}/honest-overlay.json", "w", encoding="utf-8") as handle:
+              handle.write(honest_bytes)
+          with open(f"{evidence}/mutation-provenance.json", "w", encoding="utf-8") as handle:
+              json.dump({
+                  "schema": "mutation-contrast-provenance/1",
+                  "source": "engine bundle spec catalog (config/spec/json_rpc_errcode_class.json)",
+                  "specId": "JRPC-ERRCLASS",
+                  "honest_adoption_hash": declared,
+                  "false_adoption_hash": false_identity,
+                  "mutations": [
+                      {"path": "instances[3].expectedClass", "from": "RpcInvalidRequestError", "to": "RpcParseError"},
+                      {"path": "canonicalSpecIR[15]", "from": "result == 1", "to": "result == 0"},
+                  ],
+                  "recipe": "FREEZE §10 (experiments/jrpc-errcode-slice-e2e/FREEZE.md) falseAdoptionNode",
+              }, handle, indent=2)
+              handle.write("\n")
+          print(f"honest adoption hash: {declared}")
+          print(f"false adoption hash:  {false_identity}")
+          print("false adoption document written (self-consistent, hash-bound to its own content)")
+          PY
+
+          # the control's own propositions document (subject = the frozen pin)
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          def fail(msg):
+              print(f"::error::false-adoption: {msg}")
+              sys.exit(1)
+
+          carrier = os.environ.get("JRPC_CARRIER", "")
+          if not carrier.strip() or carrier == "__JRPC_CARRIER__":
+              fail("JRPC_CARRIER is unset or the unresolved token '__JRPC_CARRIER__' — resolve the P2 carrier name before committing this workflow")
+          subject_repository = os.environ["SUBJECT_REPOSITORY"]
+          subject_commit = os.environ["SUBJECT_COMMIT"]
+          template = '{"schema_version":2,"subject":{"repository":"__SUBJECT_REPOSITORY__","commit":"__SUBJECT_SHA__"},"agent":{"id":"mutation-contrast-pinned","version":"1"},"propositions":[{"id":"errclass-__JRPC_CARRIER__-jrpc-slice","target":"json_rpc/errors.nim::new","specId":"JRPC-ERRCLASS","source_location":{"file":"json_rpc/errors.nim","line":105},"explanation":"Mutation-contrast control proposition (FREEZE §10 false adoption against the pinned original constructor — NOT the PR merge commit); formal semantics owned by engine spec catalog JRPC-ERRCLASS"}]}'
+          doc = (template
+                 .replace("__SUBJECT_REPOSITORY__", subject_repository)
+                 .replace("__SUBJECT_SHA__", subject_commit)
+                 .replace("__JRPC_CARRIER__", carrier))
+          json.loads(doc)
+          evidence = os.environ["MUTATION_EVIDENCE_DIR"]
+          with open(f"{evidence}/proposals.json", "w", encoding="utf-8") as handle:
+              handle.write(doc)
+          print(f"mutation-contrast propositions written (subject {subject_repository}@{subject_commit})")
+          PY
+          python3 -m json.tool "$evidence/proposals.json" > /dev/null
+          PROPOSALS_SHA256="$(sha256sum "$evidence/proposals.json" | awk '{print $1}')"
+
+          # bundle copy with the swapped overlay — the only overlay-injection
+          # path the CURRENT adapter contract offers (no spec-catalog override
+          # input exists; see README REVIEW items for the P5 contract ask)
+          mutated_root="${RUNNER_TEMP}/ax-bundle-mutated"
+          rm -rf "$mutated_root"
+          cp -a "$AXIOM_BUNDLE_ROOT" "$mutated_root"
+          mkdir -p "$mutated_root/config/spec"
+          cp "$evidence/false-overlay.json" "$mutated_root/config/spec/json_rpc_errcode_class.json"
+          cmp -s "$evidence/false-overlay.json" "$mutated_root/config/spec/json_rpc_errcode_class.json" \
+            || fail 'the bundle-copy overlay swap is not byte-identical'
+
+          # seed state from the mutated bundle copy (adapter seed parity)
+          state="${RUNNER_TEMP}/mutation-state"
+          mkdir -p "$state/data" "$state/logs"
+          cp "$mutated_root/data/verification_scope.lock" "$state/data/" \
+            || fail 'verification_scope.lock missing in the bundle copy'
+          cp "$mutated_root/data/baseline.json" "$state/data/" \
+            || fail 'baseline.json missing in the bundle copy'
+
+          HONEST_OVERLAY_SHA256="$(sha256sum "$evidence/honest-overlay.json" | awk '{print $1}')"
+          FALSE_OVERLAY_SHA256="$(sha256sum "$evidence/false-overlay.json" | awk '{print $1}')"
+          {
+            echo "MUTATION_EVIDENCE_DIR=$evidence"
+            echo "AXIOM_EVIDENCE_DIR=$evidence"
+            echo "AXIOM_MUTATION_ROOT=$mutated_root"
+            echo "AXIOM_STATE_DIR=$state"
+            echo "AXIOM_PROOF_STATE=$state/logs/ax_proof_state.json"
+            echo "AXIOM_PROPOSALS_FILE=$evidence/proposals.json"
+            echo "PROPOSALS_SHA256=$PROPOSALS_SHA256"
+            echo "HONEST_OVERLAY_SHA256=$HONEST_OVERLAY_SHA256"
+            echo "FALSE_OVERLAY_SHA256=$FALSE_OVERLAY_SHA256"
+          } >> "$GITHUB_ENV"
+          echo "false-adoption: OK — honest sha256=$HONEST_OVERLAY_SHA256 false sha256=$FALSE_OVERLAY_SHA256 proposals sha256=$PROPOSALS_SHA256"
+
+      - name: 'Prove the false adoption (expected exit 1 = DISPROVED)'
+        id: prove
+        timeout-minutes: 90
+        env:
+          # AXIOM_ROOT points at the MUTATED bundle copy — the only overlay
+          # injection path; the ax binary itself is byte-identical to the
+          # verified bundle (provenance recorded above).
+          AXIOM_ROOT: ${{ env.AXIOM_MUTATION_ROOT }}
+          AXIOM_STATE_DIR: ${{ env.AXIOM_STATE_DIR }}
+          AXIOM_PROVE_WORKERS: '1'
+          AXIOM_SUBJECT_REPOSITORY: 'status-im/nim-json-rpc'
+          AXIOM_SUBJECT_COMMIT: 'debf33cabf7be009a2e905d4c7921b85eb7ca6dd'
+          PROVE_BIN: ${{ env.AXIOM_MUTATION_ROOT }}/ax
+          PROPOSALS_FILE: ${{ env.AXIOM_PROPOSALS_FILE }}
+        run: |
+          set -euo pipefail
+          evidence="$MUTATION_EVIDENCE_DIR"
+          state_file="$AXIOM_PROOF_STATE"
+          set +e
+          "$PROVE_BIN" prove \
+            --proposals "$PROPOSALS_FILE" \
+            --project "$GITHUB_WORKSPACE/subject" \
+            >"$evidence/prove.log" 2>&1
+          ec=$?
+          set -e
+          echo "prove-exit=$ec" >> "$GITHUB_OUTPUT"
+          echo "PROVE_EXIT=$ec" >> "$GITHUB_ENV"
+          tail -n 200 "$evidence/prove.log" || true
+          # honest accounting: an in-contract exit without a persisted proof
+          # state is a broken run, not a verdict.
+          if [ "$ec" -le 1 ] && [ ! -f "$state_file" ]; then
+            echo "::error::ax prove exited $ec but no proof state was persisted at $state_file — cannot account this run"
+            exit 2
+          fi
+          if [ "$ec" -ge 2 ]; then
+            case "$ec" in
+              2) reason='engine internal error (out-of-contract execution failure)' ;;
+              3) reason='INPUT_REJECTED (BAD_SCHEMA / NO_PROPOSALS / SUBJECT_MISMATCH / MULTIPLE_TARGETS)' ;;
+              *) reason='out-of-contract failure (exit vocabulary 0/1/2/3/4)' ;;
+            esac
+            echo "::error::ax prove exit=$ec — $reason (fail-closed)"
+            exit "$ec"
+          fi
+          # the mutation control's EXPECTED outcome: exit 1 (DISPROVED) — the
+          # pinned original constructor refutes the false adoption's tag claim.
+          if [ "$ec" -eq 0 ]; then
+            echo "::error::VACUOUS AGREEMENT — ax prove exit 0 accepted the self-consistent FALSE adoption document (expected exit 1 / DISPROVED); the admission's green path would be theatrical"
+            exit 1
+          fi
+          echo "ax prove exit=1 — the false adoption is DISPROVED by the pinned original constructor (in-contract; the disproof shape is asserted from the persisted state next)"
+
+      - name: 'Report + canonical digest (ax report --canonical-digest)'
+        id: digest
+        env:
+          PROVE_BIN: ${{ env.AXIOM_MUTATION_ROOT }}/ax
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::digest: $1" >&2; exit 1; }
+          evidence="$MUTATION_EVIDENCE_DIR"
+          state_file="$AXIOM_PROOF_STATE"
+          [ -f "$state_file" ] || fail "proof state missing at $state_file"
+          # stdout is a single 64-hex line (report_cli.nim runCanonicalDigestCli)
+          digest_out="$("$PROVE_BIN" report --canonical-digest --state-file "$state_file" --json)" \
+            || fail 'ax report --canonical-digest failed'
+          canonical_digest="$(printf '%s\n' "$digest_out" | head -1 | tr -d '[:space:]')"
+          printf '%s' "$canonical_digest" | grep -Eq '^[0-9a-f]{64}$' \
+            || fail "canonical digest output is not a 64-hex line: '$canonical_digest'"
+          printf '%s\n' "$canonical_digest" > "$evidence/canonical-digest.txt"
+          cp "$state_file" "$evidence/ax_proof_state.json" || fail 'proof state copy failed'
+          if [ -f "$AXIOM_STATE_DIR/logs/ax_prove_trajectory.jsonl" ]; then
+            cp "$AXIOM_STATE_DIR/logs/ax_prove_trajectory.jsonl" "$evidence/"
+          fi
+          # verdict summary: runOutcome verdict/gateVerdict + first unit
+          # propositionVerdict (BYO-Agent display projection shape)
+          verdict_summary="$(jq -r \
+            '((.runOutcome.verdict // "n/a") + "/" + (.runOutcome.gateVerdict // "n/a") + "/" + ((((.reportJson.display // .display).units // [])[0].propositionVerdict) // "n/a"))' \
+            "$state_file" 2>/dev/null || true)"
+          verdict_summary="${verdict_summary:-n/a/n/a/n/a}"
+          state_run_digest="$(jq -r '.canonicalRunDigest // "n/a"' "$state_file" 2>/dev/null || true)"
+          state_run_digest="${state_run_digest:-n/a}"
+          {
+            echo "canonical-digest=$canonical_digest"
+            echo "verdict-summary=$verdict_summary"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "CANONICAL_DIGEST=$canonical_digest"
+            echo "VERDICT_SUMMARY=$verdict_summary"
+            echo "STATE_CANONICAL_RUN_DIGEST=$state_run_digest"
+          } >> "$GITHUB_ENV"
+          echo "canonical digest: $canonical_digest"
+          echo "state canonicalRunDigest: $state_run_digest"
+          echo "verdict summary: $verdict_summary"
+
+      - name: 'engineBuild guard (vacuous-run prevention — 64-hex verifier build identity)'
+        id: engine-build-guard
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::engine-build-guard: $1" >&2; exit 1; }
+          evidence="$MUTATION_EVIDENCE_DIR"
+          state_file="$AXIOM_PROOF_STATE"
+          [ -f "$state_file" ] || fail "proof state missing at $state_file — no persisted run to account"
+          id="$(jq -r '.executionIdentity.verifierBuildId // empty' "$state_file")"
+          [ -n "$id" ] \
+            || fail 'proof state executionIdentity carries no verifierBuildId — the run cannot establish the verifier build identity'
+          printf '%s' "$id" | grep -Eq '^[0-9a-f]{64}$' \
+            || fail "executionIdentity.verifierBuildId '$id' is not 64-hex — 'unmeasured' or malformed identities are inadmissible"
+          engine_build_id="$id"
+          echo "engine-build-id=$engine_build_id" >> "$GITHUB_OUTPUT"
+          echo "ENGINE_BUILD_ID=$engine_build_id" >> "$GITHUB_ENV"
+          # Vault artifacts remain diagnostic evidence: certificates are only
+          # written on green (orchestrationVerified) runs, so the vault is
+          # observation input, never the guard's authority.
+          vault="$AXIOM_STATE_DIR/build/certificates"
+          if [ -f "$vault/manifest.json" ]; then
+            cp "$vault/manifest.json" "$evidence/vault-manifest.json"
+          fi
+          if [ -d "$vault" ]; then
+            find "$vault" -maxdepth 1 -name '*.json' -printf '%f\n' | sort > "$evidence/vault-certificates.txt"
+          else
+            : > "$evidence/vault-certificates.txt"
+          fi
+          echo "engineBuild guard: OK — engineBuildId=$engine_build_id (executionIdentity envelope, verdict-class independent)"
+
+      - name: 'Disproof shape assertion (persisted state, never exit code alone)'
+        env:
+          SUBJECT_REPOSITORY: 'status-im/nim-json-rpc'
+          SUBJECT_COMMIT: 'debf33cabf7be009a2e905d4c7921b85eb7ca6dd'
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import sys
+
+          def fail(msg):
+              print(f"::error::disproof-shape: {msg}")
+              sys.exit(1)
+
+          def as_int(value):
+              if isinstance(value, bool):
+                  return None
+              if isinstance(value, int):
+                  return value
+              if isinstance(value, str) and re.fullmatch(r"[+-]?\d+", value.strip()):
+                  return int(value.strip())
+              return None
+
+          state_path = os.environ["AXIOM_PROOF_STATE"]
+          with open(state_path, encoding="utf-8") as handle:
+              state = json.load(handle)
+          if not isinstance(state, dict):
+              fail("ax_proof_state.json is not an object")
+
+          # statusCounts.failed >= 1 — at least one failed unit
+          summary = state.get("summary") if isinstance(state.get("summary"), dict) else {}
+          status_counts = summary.get("statusCounts") if isinstance(summary.get("statusCounts"), dict) else {}
+          failed = as_int(status_counts.get("failed"))
+          if failed is None or failed < 1:
+              fail(f"statusCounts.failed={status_counts.get('failed')!r} — exit 1 without at least one failed unit is not a disproof")
+
+          # the false proposition's persisted verdict must be DISPROVED
+          display = state.get("display") if isinstance(state.get("display"), dict) else {}
+          props = display.get("propositions")
+          if not isinstance(props, list) or not props or not isinstance(props[0], dict):
+              fail("display.propositions is missing — no persisted proposition verdict for the false adoption")
+          verification = props[0].get("verification") if isinstance(props[0].get("verification"), dict) else {}
+          prop_verdict = verification.get("verdict")
+          if prop_verdict != "DISPROVED":
+              fail(f"the false proposition's persisted verdict is {prop_verdict!r}, not 'DISPROVED' — exit 1 alone is not a verdict (v2 principle: persisted engine evidence decides)")
+
+          # census obligations >= 1 — the red run discharged real obligations
+          census = state.get("census") if isinstance(state.get("census"), dict) else {}
+          obligations = as_int(census.get("obligationCount")) or 0
+          if obligations < 1:
+              fail("census.obligationCount < 1 — vacuous red run (no obligations were discharged)")
+
+          # recorded (not asserted): the runOutcome projection and any vault
+          # certificates the red run produced — diagnostics for reconciling
+          # the red-run state shape with the v0.6.5 shipped engine.
+          run_outcome = state.get("runOutcome") if isinstance(state.get("runOutcome"), dict) else {}
+          vault_entries = []
+          vault_path = os.path.join(os.environ.get("AXIOM_STATE_DIR", ""), "build", "certificates", "manifest.json")
+          if os.path.isfile(vault_path):
+              try:
+                  with open(vault_path, encoding="utf-8") as handle:
+                      vault = json.load(handle)
+                  entries = vault.get("entries") if isinstance(vault, dict) else None
+                  if isinstance(entries, list):
+                      vault_entries = entries
+              except (OSError, ValueError):
+                  vault_entries = []
+
+          record = {
+              "schema": "mutation-contrast-record/1",
+              "prove_exit": as_int(os.environ.get("PROVE_EXIT")),
+              "canonical_digest": os.environ.get("CANONICAL_DIGEST", ""),
+              "engine_build_id": os.environ.get("ENGINE_BUILD_ID", ""),
+              "verdict_summary": os.environ.get("VERDICT_SUMMARY", ""),
+              "subject": {
+                  "repository": os.environ.get("SUBJECT_REPOSITORY", ""),
+                  "commit": os.environ.get("SUBJECT_COMMIT", ""),
+              },
+              "honest_overlay_sha256": os.environ.get("HONEST_OVERLAY_SHA256", ""),
+              "false_overlay_sha256": os.environ.get("FALSE_OVERLAY_SHA256", ""),
+              "proposals_sha256": os.environ.get("PROPOSALS_SHA256", ""),
+              "disproof": {
+                  "failed": failed,
+                  "proposition_verdict": prop_verdict,
+                  "obligation_count": obligations,
+              },
+              "runOutcome": run_outcome,
+              "vault_entry_count": len(vault_entries),
+              "vault": vault_entries,
+          }
+          evidence = os.environ["MUTATION_EVIDENCE_DIR"]
+          with open(f"{evidence}/mutation-record.json", "w", encoding="utf-8") as handle:
+              json.dump(record, handle, indent=2)
+              handle.write("\n")
+
+          summary_lines = [
+              "## Axiom PR Admission — mutation-contrast (red control)",
+              "",
+              "| field | value |",
+              "| --- | --- |",
+              f"| subject | `{record['subject']['repository']}`@`{record['subject']['commit']}` |",
+              f"| prove exit | `{record['prove_exit']}` (expected 1 = DISPROVED) |",
+              f"| proposition verdict | **{prop_verdict}** |",
+              f"| failed units | {failed} |",
+              f"| census obligations | {obligations} |",
+              f"| honest overlay sha256 | `{record['honest_overlay_sha256']}` |",
+              f"| false overlay sha256 | `{record['false_overlay_sha256']}` |",
+              f"| canonical digest | `{record['canonical_digest']}` |",
+              f"| engine build id | `{record['engine_build_id']}` |",
+              f"| vault entries (recorded) | {len(vault_entries)} |",
+          ]
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as handle:
+                  handle.write("\n".join(summary_lines) + "\n")
+          print("disproof-shape: PASS — the false adoption is DISPROVED in the persisted engine state")
+          print(f"failed={failed} prop_verdict={prop_verdict} obligations={obligations} vault_entries={len(vault_entries)}")
+          PY
+
+      - name: 'Post fingerprint + Zero-Footprint assertion'
+        id: fingerprint-post
+        if: ${{ always() && steps.prove.outputs.prove-exit != '' }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::post-fingerprint: $1" >&2; exit 1; }
+          evidence="${RUNNER_TEMP}/mutation-evidence"
+          post_tree="$(git -C subject rev-parse 'HEAD^{tree}')"
+          [ -n "$post_tree" ] || fail 'post HEAD^{tree} resolved empty'
+          porcelain="$(git -C subject status --porcelain)"
+          printf '%s\n' "$post_tree" > "$evidence/post_tree_hash.txt"
+          echo "POST_TREE_HASH=$post_tree" >> "$GITHUB_ENV"
+          if [ "$post_tree" = "$PRE_TREE_HASH" ] && [ -z "$porcelain" ]; then
+            zero_ok='true'
+          else
+            zero_ok='false'
+          fi
+          echo "zero-footprint-ok=$zero_ok" >> "$GITHUB_OUTPUT"
+          echo "ZERO_FOOTPRINT_OK=$zero_ok" >> "$GITHUB_ENV"
+          if [ "$zero_ok" != 'true' ]; then
+            echo "::error::Zero-Footprint violation: pre tree '$PRE_TREE_HASH' != post tree '$post_tree' (porcelain: '${porcelain:-<empty>}')"
+            exit 1
+          fi
+          echo "zero-footprint: OK — pre==post tree=$post_tree, porcelain clean"
+
+      - name: 'Upload mutation-contrast evidence artifact'
+        if: ${{ always() && steps.prove.outputs.prove-exit != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: mutation-contrast-evidence
+          path: '${{ env.MUTATION_EVIDENCE_DIR }}'
+          if-no-files-found: error
+
+      - name: 'Step summary (failure-path essentials)'
+        if: ${{ failure() && steps.prove.outputs.prove-exit != '' }}
+        run: |
+          set -euo pipefail
+          {
+            echo '## Axiom PR Admission — mutation-contrast (FAILED — essentials)'
+            echo ''
+            echo '| field | value |'
+            echo '|---|---|'
+            echo "| subject | \`status-im/nim-json-rpc\`@\`debf33cabf7be009a2e905d4c7921b85eb7ca6dd\` |"
+            echo "| prove exit | \`$PROVE_EXIT\` (expected 1 = DISPROVED; 0 = vacuous agreement — anti-theater failure; ≥2 = fail-closed) |"
+            echo "| verdict | ${VERDICT_SUMMARY:-n/a} |"
+            echo "| canonical digest | \`${CANONICAL_DIGEST:-n/a}\` |"
+            echo "| engineBuildId | \`${ENGINE_BUILD_ID:-n/a}\` |"
+            echo "| zero-footprint | ${ZERO_FOOTPRINT_OK:-unknown} (pre \`$PRE_TREE_HASH\` → post \`$POST_TREE_HASH\`) |"
+            echo "| runner image | ${RUNNER_IMAGE:-unknown} |"
+            echo "| evidence artifact | \`mutation-contrast-evidence\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  admission-integrity:
+    # The 7 guards and the v2 classification are UNCHANGED from the
+    # nim-libp2p precedent — they adjudicate legs A/B only. mutation-contrast
+    # is joined to `needs:` so the integrity stage runs after every evidence
+    # leg, but the mutation leg's own assertions fail at job level (red run
+    # => red pipeline) — pipeline success and subject verdict stay separate
+    # axes exactly as in the precedent.
+    if: ${{ !cancelled() && github.repository == 'Archright/nim-json-rpc' }}
+    needs: [propositions, verify-a, verify-b, mutation-contrast]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download evidence leg A
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ax-verify-evidence-propositions-A
+          path: legs/A
+
+      - name: Download evidence leg B
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ax-verify-evidence-propositions-B
+          path: legs/B
+
+      - name: Admission Integrity Checks
+        env:
+          EXPECTED_SUBJECT_COMMIT: ${{ needs.propositions.outputs.subject_commit }}
+          PROPOSITIONS_SHA256: ${{ needs.propositions.outputs.propositions_sha256 }}
+          ACCEPTANCE_CLASS: ${{ needs.propositions.outputs.acceptance_class }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import sys
+
+          EXPECTED_REPO = "Archright/nim-json-rpc"
+          # v0.6.5 (site 6/6): tag-form token. The adapter records
+          # AXIOM_VERSION_PLAIN (v-stripped) in verify-record.json — strip the
+          # v-prefix here for parity with that recorded field.
+          EXPECTED_AXIOM_VERSION = "v0.6.5"
+          if EXPECTED_AXIOM_VERSION.startswith("v"):
+              EXPECTED_AXIOM_VERSION = EXPECTED_AXIOM_VERSION[1:]
+          EXPECTED_SUBJECT_COMMIT = os.environ.get("EXPECTED_SUBJECT_COMMIT", "")
+          PROPOSITIONS_SHA256 = os.environ.get("PROPOSITIONS_SHA256", "")
+          ACCEPTANCE_CLASS = os.environ.get("ACCEPTANCE_CLASS", "")
+          GUARD_ORDER = [
+              "SUBJECT_IDENTITY",
+              "INPUT_EQUALITY",
+              "DETERMINISM",
+              "EVIDENCE_NON_VACUITY",
+              "ZERO_FOOTPRINT",
+              "ENVIRONMENT_EQUALITY",
+              "EVIDENCE_COHERENCE",
+          ]
+          TOOLCHAIN_KEYS = ("nim", "z3", "lean", "libpcre3")
+          HEX64 = re.compile(r"^[0-9a-f]{64}$")
+
+          violations = {guard: [] for guard in GUARD_ORDER}
+
+          def fail(guard, detail):
+              violations[guard].append(detail)
+
+          def find_record(base):
+              if not os.path.isdir(base):
+                  return None
+              for root, _dirs, files in os.walk(base):
+                  if "verify-record.json" in files:
+                      return os.path.join(root, "verify-record.json")
+              return None
+
+          def load_record(path):
+              if path is None:
+                  return None
+              try:
+                  with open(path, encoding="utf-8") as handle:
+                      data = json.load(handle)
+              except (OSError, ValueError):
+                  return None
+              return data if isinstance(data, dict) else None
+
+          def as_int(value):
+              if isinstance(value, bool):
+                  return None
+              if isinstance(value, int):
+                  return value
+              if isinstance(value, str) and re.fullmatch(r"[+-]?\d+", value.strip()):
+                  return int(value.strip())
+              return None
+
+          def as_bool(value):
+              if isinstance(value, bool):
+                  return value
+              if isinstance(value, str):
+                  text = value.strip().lower()
+                  if text == "true":
+                      return True
+                  if text == "false":
+                      return False
+              return None
+
+          leg_paths = {"A": find_record("legs/A"), "B": find_record("legs/B")}
+          records = {leg: load_record(path) for leg, path in leg_paths.items()}
+
+          # EVIDENCE_NON_VACUITY — both record files exist and carry real evidence.
+          for leg in ("A", "B"):
+              if records[leg] is None:
+                  fail("EVIDENCE_NON_VACUITY", f"leg {leg}: verify-record.json missing or unreadable under legs/{leg}")
+                  continue
+              record = records[leg]
+              summary_text = record.get("verdict_summary")
+              if not isinstance(summary_text, str) or not summary_text.strip():
+                  fail("EVIDENCE_NON_VACUITY", f"leg {leg}: verdict_summary is missing or empty")
+              else:
+                  # ax-verify.yml projects verdict_summary as
+                  # "<runOutcome.verdict>/<runOutcome.gateVerdict>/<display.units[0].propositionVerdict>"
+                  # where each fallback token is literal "n/a" (which itself contains "/").
+                  # In PR admission the subject is the synthesized PR merge commit (github.sha),
+                  # which differs from the static commit recorded in the spec overlay, so
+                  # display.units (exact-commit scope projection) is empty while
+                  # display.propositions and prove_exit carry the authoritative verdict.
+                  # Non-vacuity therefore requires non-"n/a" machine outcome tokens v and gv.
+                  m_vs = re.fullmatch(
+                      r"(?P<v>n/a|[^/\s]+)/(?P<gv>n/a|[^/\s]+)/(?P<pv>n/a|[^/\s]+)",
+                      summary_text.strip(),
+                      re.IGNORECASE,
+                  )
+                  if not m_vs or m_vs.group("v").lower() == "n/a" or m_vs.group("gv").lower() == "n/a":
+                      fail("EVIDENCE_NON_VACUITY", f"leg {leg}: verdict_summary has vacuous machine outcome segments: {summary_text!r}")
+              prove_exit = as_int(record.get("prove_exit"))
+              if prove_exit not in (0, 1, 3):
+                  fail("EVIDENCE_NON_VACUITY", f"leg {leg}: prove_exit {record.get('prove_exit')!r} is not one of 0/1/3")
+              engine_build_id = record.get("engine_build_id")
+              if not isinstance(engine_build_id, str) or not HEX64.fullmatch(engine_build_id):
+                  fail("EVIDENCE_NON_VACUITY", f"leg {leg}: engine_build_id {engine_build_id!r} is not 64-hex")
+
+          # SUBJECT_IDENTITY — both legs verified exactly this PR subject with this engine.
+          for leg in ("A", "B"):
+              record = records[leg]
+              if record is None:
+                  fail("SUBJECT_IDENTITY", f"leg {leg}: record missing; subject identity unverifiable")
+                  continue
+              if record.get("subject_repository") != EXPECTED_REPO:
+                  fail("SUBJECT_IDENTITY", f"leg {leg}: subject_repository {record.get('subject_repository')!r} != {EXPECTED_REPO!r}")
+              if str(record.get("subject_commit", "")) != EXPECTED_SUBJECT_COMMIT:
+                  fail("SUBJECT_IDENTITY", f"leg {leg}: subject_commit {record.get('subject_commit')!r} != {EXPECTED_SUBJECT_COMMIT!r}")
+              if str(record.get("axiom_version", "")) != EXPECTED_AXIOM_VERSION:
+                  fail("SUBJECT_IDENTITY", f"leg {leg}: axiom_version {record.get('axiom_version')!r} != {EXPECTED_AXIOM_VERSION!r}")
+
+          # INPUT_EQUALITY — both legs consumed the same pinned propositions document.
+          proposals_sha = {leg: (records[leg].get("proposals_sha256") if records[leg] else None) for leg in ("A", "B")}
+          if records["A"] is None or records["B"] is None:
+              fail("INPUT_EQUALITY", "record(s) missing; proposals_sha256 equality unverifiable")
+          elif proposals_sha["A"] is None or proposals_sha["B"] is None or proposals_sha["A"] != proposals_sha["B"]:
+              fail("INPUT_EQUALITY", f"proposals_sha256 mismatch: A={proposals_sha['A']!r} B={proposals_sha['B']!r}")
+
+          # DETERMINISM — both legs report the same real 64-hex canonical digest.
+          canonical = {leg: (records[leg].get("canonical_digest") if records[leg] else None) for leg in ("A", "B")}
+          if records["A"] is None or records["B"] is None:
+              fail("DETERMINISM", "record(s) missing; canonical_digest comparison unverifiable")
+          else:
+              for leg in ("A", "B"):
+                  value = canonical[leg]
+                  if not isinstance(value, str) or not HEX64.fullmatch(value):
+                      fail("DETERMINISM", f"leg {leg}: canonical_digest {value!r} is not 64-hex")
+              if canonical["A"] != canonical["B"]:
+                  fail("DETERMINISM", f"canonical_digest diverged: A={canonical['A']!r} B={canonical['B']!r}")
+
+          # ZERO_FOOTPRINT — subject tree untouched on both legs.
+          for leg in ("A", "B"):
+              record = records[leg]
+              if record is None:
+                  fail("ZERO_FOOTPRINT", f"leg {leg}: record missing; zero-footprint unverifiable")
+                  continue
+              if as_bool(record.get("zero_footprint_ok")) is not True:
+                  fail("ZERO_FOOTPRINT", f"leg {leg}: zero_footprint_ok {record.get('zero_footprint_ok')!r} is not true")
+              pre = record.get("pre_tree_hash")
+              post = record.get("post_tree_hash")
+              if not isinstance(pre, str) or not pre or not isinstance(post, str) or not post or pre != post:
+                  fail("ZERO_FOOTPRINT", f"leg {leg}: pre_tree_hash/post_tree_hash not equal or invalid: pre={pre!r} post={post!r}")
+
+          # ENVIRONMENT_EQUALITY — identical runner OS family, bundle/engine identity, and 4-toolchain pins.
+          # Note: GitHub-hosted runners (`runs-on: ubuntu-24.04`) roll out minor VM snapshot builds
+          # (`<ImageOS>/<ImageVersion>`, e.g. `ubuntu24/20261101.360.1` vs `ubuntu24/20261111.370.1`)
+          # across concurrent jobs outside workflow control, while ax-verify.yml pins the entire
+          # verification toolchain and bundle by SHA-256. Enforce identical non-empty ImageOS family,
+          # identical bundle_sha256, identical engine_build_id, and identical 4-toolchain versions,
+          # and record both full runner_image strings in the report.
+          if records["A"] is None or records["B"] is None:
+              fail("ENVIRONMENT_EQUALITY", "record(s) missing; environment equality unverifiable")
+          else:
+              runner_a = records["A"].get("runner_image")
+              runner_b = records["B"].get("runner_image")
+              os_a = runner_a.split("/")[0].strip() if isinstance(runner_a, str) and "/" in runner_a else ""
+              os_b = runner_b.split("/")[0].strip() if isinstance(runner_b, str) and "/" in runner_b else ""
+              if not os_a or not os_b or os_a != os_b:
+                  fail("ENVIRONMENT_EQUALITY", f"runner_image OS family mismatch or invalid: A={runner_a!r} B={runner_b!r}")
+              if records["A"].get("bundle_sha256") != records["B"].get("bundle_sha256") or not records["A"].get("bundle_sha256"):
+                  fail("ENVIRONMENT_EQUALITY", f"bundle_sha256 mismatch: A={records['A'].get('bundle_sha256')!r} B={records['B'].get('bundle_sha256')!r}")
+              if records["A"].get("engine_build_id") != records["B"].get("engine_build_id"):
+                  fail("ENVIRONMENT_EQUALITY", f"engine_build_id mismatch: A={records['A'].get('engine_build_id')!r} B={records['B'].get('engine_build_id')!r}")
+              toolchain_a = records["A"].get("toolchain")
+              toolchain_b = records["B"].get("toolchain")
+              if not isinstance(toolchain_a, dict) or not isinstance(toolchain_b, dict):
+                  fail("ENVIRONMENT_EQUALITY", f"toolchain records missing or invalid: A={toolchain_a!r} B={toolchain_b!r}")
+              else:
+                  for key in TOOLCHAIN_KEYS:
+                      value_a = toolchain_a.get(key)
+                      value_b = toolchain_b.get(key)
+                      if value_a is None or value_b is None or value_a != value_b:
+                          fail("ENVIRONMENT_EQUALITY", f"toolchain.{key} mismatch: A={value_a!r} B={value_b!r}")
+
+          # --- v2: engine-evidence classification (never exit-code alone) ---
+          def find_evidence(base, name):
+              if not os.path.isdir(base):
+                  return None
+              for root, _dirs, files in os.walk(base):
+                  if name in files:
+                      return os.path.join(root, name)
+              return None
+
+          def load_json(path):
+              if path is None:
+                  return None
+              try:
+                  with open(path, encoding="utf-8") as handle:
+                      data = json.load(handle)
+              except (OSError, ValueError):
+                  return None
+              return data if isinstance(data, dict) else None
+
+          engine = {}
+          for leg in ("A", "B"):
+              base = "legs/" + leg
+              engine[leg] = {
+                  "state": load_json(find_evidence(base, "ax_proof_state.json")),
+                  "vault": load_json(find_evidence(base, "vault-manifest.json")),
+              }
+
+          def vault_entries(leg):
+              vault = engine[leg]["vault"] or {}
+              entries = vault.get("entries")
+              return entries if isinstance(entries, list) else []
+
+          def vault_key_set(leg):
+              return {(e.get("modulePath"), e.get("functionName"), e.get("status"),
+                       e.get("solverMethod"), e.get("irHash"))
+                      for e in vault_entries(leg) if isinstance(e, dict)}
+
+          def vault_names(leg):
+              return {e.get("functionName") for e in vault_entries(leg) if isinstance(e, dict)}
+
+          def vault_statuses(leg):
+              return {e.get("functionName"): e.get("status")
+                      for e in vault_entries(leg) if isinstance(e, dict)}
+
+          def census_projection(leg):
+              state = engine[leg]["state"] or {}
+              census = state.get("census")
+              if not isinstance(census, dict):
+                  return None
+              return (tuple(census.get("proofCandidates") or []),
+                      census.get("obligationCount"), census.get("candidateCount"),
+                      census.get("proofCandidateCount"))
+
+          for leg in ("A", "B"):
+              if engine[leg]["state"] is None:
+                  fail("EVIDENCE_COHERENCE", f"leg {leg}: ax_proof_state.json missing or unreadable")
+              if engine[leg]["vault"] is None:
+                  fail("EVIDENCE_COHERENCE", f"leg {leg}: vault-manifest.json missing or unreadable")
+
+          if all(engine[leg]["vault"] is not None for leg in ("A", "B")):
+              if vault_key_set("A") != vault_key_set("B"):
+                  fail("EVIDENCE_COHERENCE", "vault entry set diverged between legs A and B")
+          if all(engine[leg]["state"] is not None for leg in ("A", "B")):
+              if census_projection("A") != census_projection("B"):
+                  fail("EVIDENCE_COHERENCE",
+                       f"census projection diverged: A={census_projection('A')!r} B={census_projection('B')!r}")
+              declared = engine["A"]["state"].get("declaredRequired")
+              if not isinstance(declared, list) or not declared:
+                  fail("EVIDENCE_COHERENCE", "declaredRequired is missing or empty")
+              else:
+                  names_a = vault_names("A")
+                  for unit_id in declared:
+                      name = str(unit_id).split("::")[-1]
+                      if name not in names_a:
+                          fail("EVIDENCE_COHERENCE",
+                               f"declaredRequired unit {unit_id!r} has no vault record (wave-facing name {name!r})")
+
+          def display_proposition(leg):
+              state = engine[leg]["state"] or {}
+              display = state.get("display")
+              if not isinstance(display, dict):
+                  return None
+              props = display.get("propositions")
+              if not isinstance(props, list) or not props:
+                  return None
+              return props[0] if isinstance(props[0], dict) else None
+
+          def classify():
+              if records["A"] is None or records["B"] is None:
+                  return "UNCLASSIFIED"
+              prove_exit_a = as_int(records["A"].get("prove_exit"))
+              prove_exit_b = as_int(records["B"].get("prove_exit"))
+              if prove_exit_a is None or prove_exit_b is None:
+                  return "UNCLASSIFIED"
+              if prove_exit_a != prove_exit_b:
+                  return "CONTRADICTION"
+              if any(engine[leg]["state"] is None or engine[leg]["vault"] is None for leg in ("A", "B")):
+                  return "UNCLASSIFIED"
+
+              state_a = engine["A"]["state"]
+              summary = state_a.get("summary") if isinstance(state_a.get("summary"), dict) else {}
+              status_counts = summary.get("statusCounts") if isinstance(summary.get("statusCounts"), dict) else {}
+              verified = as_int(status_counts.get("verified")) or 0
+              failed = as_int(status_counts.get("failed")) or 0
+              outcome = state_a.get("runOutcome") if isinstance(state_a.get("runOutcome"), dict) else {}
+              verdict = outcome.get("verdict")
+              gate = outcome.get("gateVerdict")
+              complete = outcome.get("verificationComplete")
+              prop = display_proposition("A") or {}
+              capability = prop.get("capability") if isinstance(prop.get("capability"), dict) else {}
+              verification = prop.get("verification") if isinstance(prop.get("verification"), dict) else {}
+              prop_verdict = verification.get("verdict")
+              census = state_a.get("census") if isinstance(state_a.get("census"), dict) else {}
+              proof_candidates = as_int(census.get("proofCandidateCount")) or 0
+              obligations = as_int(census.get("obligationCount")) or 0
+              declared = state_a.get("declaredRequired")
+              statuses = vault_statuses("A")
+
+              def required_covered(ok_statuses):
+                  if not isinstance(declared, list) or not declared:
+                      return False
+                  for unit_id in declared:
+                      name = str(unit_id).split("::")[-1]
+                      if statuses.get(name) not in ok_statuses:
+                          return False
+                  return True
+
+              if prove_exit_a == 0:
+                  if ACCEPTANCE_CLASS == "proof":
+                      ok = (verified > 0 and complete is True and verdict != "FAIL"
+                            and gate != "FAIL" and prop_verdict != "DISPROVED")
+                      return "PROVED_REPRODUCIBLE" if ok else "VACUOUS_BLOCKED"
+                  if ACCEPTANCE_CLASS == "law-conformance":
+                      ok = (verdict == "INCONCLUSIVE" and capability.get("status") == "CAPABLE"
+                            and verification.get("attempted") is True and prop_verdict == "UNKNOWN"
+                            and required_covered({"certZ3Candidate", "certGreen", "certLeanVerified"})
+                            and proof_candidates >= 1 and obligations >= 1)
+                      return "LAW_CONFORMANCE_ACCEPTED_REPRODUCIBLE" if ok else "VACUOUS_BLOCKED"
+                  return "UNCLASSIFIED"
+              if prove_exit_a == 1:
+                  red_units = [d for d in (declared or [])
+                               if statuses.get(str(d).split("::")[-1]) == "certRed"]
+                  ok = failed > 0 and bool(red_units) and prop_verdict == "DISPROVED"
+                  return "DISPROVED_REPRODUCIBLE" if ok else "FAILED_NO_DISPROOF"
+              if prove_exit_a == 3:
+                  return "REFUSAL_REPRODUCIBLE"
+              return "UNCLASSIFIED"
+
+          classification = classify()
+
+          pr_metadata = {}
+          try:
+              with open(os.environ.get("GITHUB_EVENT_PATH", ""), encoding="utf-8") as handle:
+                  event = json.load(handle)
+              pull_request = event.get("pull_request") or {}
+              if isinstance(pull_request, dict):
+                  pr_metadata = {
+                      "number": pull_request.get("number"),
+                      "head_sha": (pull_request.get("head") or {}).get("sha"),
+                      "base_sha": (pull_request.get("base") or {}).get("sha"),
+                  }
+          except (OSError, ValueError, TypeError):
+              pr_metadata = {}
+
+          guard_status = {guard: ("FAIL" if violations[guard] else "PASS") for guard in GUARD_ORDER}
+          integrity = "PASS" if all(violations[guard] == [] for guard in GUARD_ORDER) else "FAIL"
+          if integrity == "FAIL" and classification in (
+                  "PROVED_REPRODUCIBLE", "LAW_CONFORMANCE_ACCEPTED_REPRODUCIBLE",
+                  "DISPROVED_REPRODUCIBLE", "REFUSAL_REPRODUCIBLE"):
+              classification = "CONTRADICTION"
+
+          report = {
+              "schema": "admission-integrity-report/1",
+              "integrity": integrity,
+              "guards": {guard: {"status": guard_status[guard], "violations": violations[guard]} for guard in GUARD_ORDER},
+              "classification": classification,
+              "acceptance_class": ACCEPTANCE_CLASS,
+              "evidence_tier": ("candidate" if classification == "LAW_CONFORMANCE_ACCEPTED_REPRODUCIBLE"
+                                else ("verified" if classification == "PROVED_REPRODUCIBLE" else None)),
+              "proposition_verdicts": {
+                  "A": ((engine["A"]["state"] or {}).get("display", {}) or {}).get("propositions"),
+                  "B": ((engine["B"]["state"] or {}).get("display", {}) or {}).get("propositions"),
+              },
+              "canonical_digest": {"A": canonical["A"], "B": canonical["B"]},
+              "prove_exit": {
+                  "A": records["A"].get("prove_exit") if records["A"] else None,
+                  "B": records["B"].get("prove_exit") if records["B"] else None,
+              },
+              "subject": {"repository": EXPECTED_REPO, "commit": EXPECTED_SUBJECT_COMMIT},
+              "propositions_sha256": PROPOSITIONS_SHA256,
+              "pr": pr_metadata,
+              "records": {"A": leg_paths["A"], "B": leg_paths["B"]},
+          }
+
+          with open("guards.jsonl", "w", encoding="utf-8") as handle:
+              for guard in GUARD_ORDER:
+                  handle.write(json.dumps({"guard": guard, "status": guard_status[guard], "violations": violations[guard]}) + "\n")
+
+          with open("admission-integrity-report.json", "w", encoding="utf-8") as handle:
+              json.dump(report, handle, indent=2)
+              handle.write("\n")
+
+          print("== Admission Integrity Checks ==")
+          for guard in GUARD_ORDER:
+              print(f"GUARD {guard_status[guard]}: {guard}")
+              for detail in violations[guard]:
+                  print(f"  - {detail}")
+          print(f"classification={classification}")
+          print(f"canonical_digest A={canonical['A']!r} B={canonical['B']!r}")
+          print(f"subject_commit={EXPECTED_SUBJECT_COMMIT}")
+
+          summary_lines = [
+              "## Axiom PR Admission — admission integrity",
+              "",
+              "| guard | status |",
+              "| --- | --- |",
+          ]
+          for guard in GUARD_ORDER:
+              summary_lines.append(f"| {guard} | {guard_status[guard]} |")
+          summary_lines.extend([
+              "",
+              f"- classification: **{classification}**",
+              f"- canonical_digest A: `{canonical['A']}`",
+              f"- canonical_digest B: `{canonical['B']}`",
+              f"- subject commit: `{EXPECTED_SUBJECT_COMMIT}`",
+              f"- propositions_sha256: `{PROPOSITIONS_SHA256}`",
+          ])
+          if integrity == "FAIL":
+              summary_lines.append("")
+              summary_lines.append("### Violations")
+              for guard in GUARD_ORDER:
+                  for detail in violations[guard]:
+                      summary_lines.append(f"- `{guard}`: {detail}")
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as handle:
+                  handle.write("\n".join(summary_lines) + "\n")
+
+          if integrity == "FAIL":
+              for guard in GUARD_ORDER:
+                  if violations[guard]:
+                      print(f"::error::admission integrity guard violated: {guard}: " + "; ".join(violations[guard]))
+              sys.exit(1)
+          PY
+
+      - name: Upload admission integrity report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: admission-integrity-report
+          path: |
+            guards.jsonl
+            admission-integrity-report.json
+          if-no-files-found: error
+
+  subject-verdict:
+    if: ${{ !cancelled() && github.repository == 'Archright/nim-json-rpc' }}
+    needs: [propositions, admission-integrity]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download admission integrity report
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: admission-integrity-report
+          path: integrity
+
+      - name: Download evidence leg A (engine context only — no re-adjudication)
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ax-verify-evidence-propositions-A
+          path: legs/A
+
+      - name: Download evidence leg B (engine context only — no re-adjudication)
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ax-verify-evidence-propositions-B
+          path: legs/B
+
+      - name: Subject verdict mapping
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          REPORT_PATH = "integrity/admission-integrity-report.json"
+          LEG_BASES = {"A": "legs/A", "B": "legs/B"}
+
+          def pr_metadata():
+              try:
+                  with open(os.environ.get("GITHUB_EVENT_PATH", ""), encoding="utf-8") as handle:
+                      event = json.load(handle)
+              except (OSError, ValueError, TypeError):
+                  return {}
+              pull_request = event.get("pull_request") or {}
+              if not isinstance(pull_request, dict):
+                  return {}
+              return {
+                  "number": pull_request.get("number"),
+                  "head_sha": (pull_request.get("head") or {}).get("sha"),
+                  "base_sha": (pull_request.get("base") or {}).get("sha"),
+              }
+
+          def engine_verdict_summaries():
+              summaries = {}
+              for leg, base in LEG_BASES.items():
+                  for root, _dirs, files in os.walk(base):
+                      if "verify-record.json" not in files:
+                          continue
+                      try:
+                          with open(os.path.join(root, "verify-record.json"), encoding="utf-8") as handle:
+                              record = json.load(handle)
+                          if isinstance(record, dict):
+                              summaries[leg] = {"verdict_summary": record.get("verdict_summary")}
+                      except (OSError, ValueError):
+                          pass
+                      break
+              return summaries
+
+          PR_METADATA = pr_metadata()
+          ENGINE_SUMMARIES = engine_verdict_summaries()
+
+          def write_outputs(verdict, log_label, reason, report):
+              report = report if isinstance(report, dict) else {}
+              guards = report.get("guards")
+              if not isinstance(guards, dict):
+                  guards = {}
+              guard_rows = []
+              for name, value in guards.items():
+                  status = value.get("status") if isinstance(value, dict) else None
+                  guard_rows.append((name, status))
+              violated = [name for name, status in guard_rows if status != "PASS"]
+              integrity = report.get("integrity")
+              if not isinstance(integrity, str):
+                  integrity = "FAIL"
+              canonical = report.get("canonical_digest")
+              if not isinstance(canonical, dict):
+                  canonical = {}
+              subject = report.get("subject")
+              if not isinstance(subject, dict):
+                  subject = {}
+              digest_a = canonical.get("A")
+              digest_b = canonical.get("B")
+              subject_commit = subject.get("commit")
+              propositions_sha256 = report.get("propositions_sha256")
+              classification = report.get("classification")
+
+              verdict_doc = {
+                  "schema": "admission-verdict/1",
+                  "subject_verdict": verdict,
+                  "reason": reason,
+                  "classification": classification,
+                  "acceptance_class": report.get("acceptance_class"),
+                  "evidence_tier": report.get("evidence_tier"),
+                  "integrity_status": integrity,
+                  "violated_guards": violated,
+                  "guards": guards,
+                  "canonical_digest": {"A": digest_a, "B": digest_b},
+                  "subject_commit": subject_commit,
+                  "propositions_sha256": propositions_sha256,
+                  "pr": PR_METADATA,
+                  "engine_verdict_summaries": ENGINE_SUMMARIES,
+              }
+              with open("admission-verdict.json", "w", encoding="utf-8") as handle:
+                  json.dump(verdict_doc, handle, indent=2)
+                  handle.write("\n")
+
+              summary_lines = [
+                  "## Axiom PR Admission — verdict (two axes)",
+                  "",
+                  f"### Campaign / Admission Integrity: {integrity}",
+                  "",
+              ]
+              for name, status in guard_rows:
+                  summary_lines.append(f"- {name}: {status}")
+              if not guard_rows:
+                  summary_lines.append("- no guard results available (admission-integrity-report missing or unreadable)")
+              summary_lines.extend([
+                  "",
+                  f"### Subject Verdict: {verdict}",
+                  "",
+                  f"- reason: {reason}",
+                  f"- classification: {classification}",
+                  f"- acceptance class: {report.get('acceptance_class')}",
+                  f"- evidence tier: {report.get('evidence_tier')}",
+                  f"- canonical_digest A: `{digest_a}`",
+                  f"- canonical_digest B: `{digest_b}`",
+                  f"- subject commit: `{subject_commit}`",
+                  f"- propositions_sha256: `{propositions_sha256}`",
+              ])
+              for leg in ("A", "B"):
+                  summary = ENGINE_SUMMARIES.get(leg, {}).get("verdict_summary")
+                  if summary:
+                      summary_lines.append(f"- engine verdict_summary (leg {leg}): {summary}")
+              with open("verdict-summary.md", "w", encoding="utf-8") as handle:
+                  handle.write("\n".join(summary_lines) + "\n")
+              summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+              if summary_path:
+                  with open(summary_path, "a", encoding="utf-8") as handle:
+                      handle.write("\n".join(summary_lines) + "\n")
+              print(f"SUBJECT_VERDICT={verdict} {log_label}".rstrip())
+              print(f"reason={reason}")
+
+          report = None
+          if os.path.exists(REPORT_PATH):
+              try:
+                  with open(REPORT_PATH, encoding="utf-8") as handle:
+                      loaded = json.load(handle)
+                  if isinstance(loaded, dict):
+                      report = loaded
+              except (OSError, ValueError):
+                  report = None
+
+          if report is None:
+              write_outputs("FAIL", "(evidence integrity)", "FAIL (evidence integrity): admission-integrity-report.json missing or unreadable", None)
+              sys.exit(1)
+
+          guards = report.get("guards")
+          if not isinstance(guards, dict):
+              guards = {}
+          violated = [name for name, value in guards.items() if not (isinstance(value, dict) and value.get("status") == "PASS")]
+          integrity = report.get("integrity")
+          if integrity != "PASS" or violated:
+              detail = ", ".join(violated) if violated else "integrity is not PASS"
+              write_outputs("FAIL", "(evidence integrity)", f"FAIL (evidence integrity): {detail}", report)
+              sys.exit(1)
+
+          classification = report.get("classification")
+          subject = report.get("subject") if isinstance(report.get("subject"), dict) else {}
+          subject_commit = subject.get("commit")
+
+          if classification == "PROVED_REPRODUCIBLE":
+              write_outputs("PASS", "", "Adopted proposition PROVED reproducibly on the PR subject (both legs)", report)
+              sys.exit(0)
+          if classification == "LAW_CONFORMANCE_ACCEPTED_REPRODUCIBLE":
+              write_outputs("PASS", "", "Adopted proposition accepted reproducibly at its declared acceptance class (law-conformance, candidate-tier evidence — NOT a formal PROVED verdict)", report)
+              sys.exit(0)
+          if classification == "VACUOUS_BLOCKED":
+              write_outputs("FAIL", "(vacuous)", "VACUOUS_BLOCKED — exit 0 observed without the acceptance-class evidence conjuncts (no green without evidence)", report)
+              sys.exit(1)
+          if classification == "FAILED_NO_DISPROOF":
+              write_outputs("FAIL", "(no disproof)", "FAILED_NO_DISPROOF — exit 1 observed without a reproducible certRed counterexample", report)
+              sys.exit(1)
+          if classification == "DISPROVED_REPRODUCIBLE":
+              write_outputs("FAIL", "(disproved)", f"ADOPTED PROPOSITION DISPROVED on PR subject {subject_commit} (reproducible counterexample)", report)
+              sys.exit(1)
+          if classification == "REFUSAL_REPRODUCIBLE":
+              write_outputs("FAIL", "(not ready)", "NOT READY — engine could not adjudicate; pipeline success and subject verdict are separate axes", report)
+              sys.exit(1)
+          if classification in ("CONTRADICTION", "UNCLASSIFIED"):
+              write_outputs("FAIL", "(inconclusive)", f"subject verdict FAIL: classification={classification}", report)
+              sys.exit(1)
+          write_outputs("FAIL", "(unknown classification)", f"subject verdict FAIL: unknown classification {classification!r}", report)
+          sys.exit(1)
+          PY
+
+      - name: Upload admission verdict
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: admission-verdict
+          path: |
+            admission-verdict.json
+            verdict-summary.md
+          if-no-files-found: error
