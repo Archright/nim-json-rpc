@@ -120,3 +120,5 @@ proc new*(
       err(RpcServerError)
     else:
       err(RpcApplicationError)
+
+# admission-red campaign: subject-byte mutation (must invalidate the adoption)
