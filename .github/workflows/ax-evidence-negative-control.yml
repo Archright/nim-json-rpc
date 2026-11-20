@@ -1,0 +1,351 @@
+# Axiom certificate-evidence negative controls — operational falsification.
+#
+# This workflow takes a REAL admission evidence artifact
+# (`ax-verify-evidence-propositions-A` from a completed admission run), keeps
+# every integrity layer consistent, breaks exactly ONE property per copy, and
+# asserts that the pinned v0.6.6 verifier (`ax cert verify-export`) rejects the
+# copy with the exact reasonCode fixed by
+# docs/spec/admission_evidence_export_contract.md §3.1:
+#
+#   body removal        -> CERT_BODY_MISSING        (contract §7-6 row 1)
+#   status tamper       -> CERT_STATUS_MISMATCH     (digest recomputed)
+#   digest tamper       -> CERT_SET_DIGEST_MISMATCH (only the set digest changed)
+#   observation loss    -> AXIOM_OBSERVATION_MISSING (dependent digests recomputed)
+#
+# The consumer guard (nim-json-rpc-pr-admission.yml `certificate-evidence`)
+# fails on any verify-export exit != 0; this workflow proves that the rejection
+# paths are real and correctly classified, instead of "something failed".
+#
+# Placement: the artifact producer's repository (Archright/nim-json-rpc).
+# axiom-cli provides the reusable adapter/verifier only (contract §5.2-7).
+name: ax-evidence-negative-control
+run-name: ax-evidence-negative-control run=${{ inputs.run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Admission workflow run id whose evidence artifact is the control base.'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  negative-control:
+    if: ${{ github.repository == 'Archright/nim-json-rpc' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      actions: read        # evidence artifact archive
+      attestations: read   # gh attestation verify (base provenance)
+      contents: read
+    env:
+      AXIOM_VERSION_NORM: 'v0.6.6'
+      AXIOM_VERSION_PLAIN: '0.6.6'
+      GH_REPO: Archright/nim-json-rpc
+      CONTROL_RUN_ID: ${{ inputs.run_id }}
+    steps:
+      - name: 'Validate control inputs'
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::negative-control: $1" >&2; exit 1; }
+          printf '%s' "$CONTROL_RUN_ID" | grep -Eq '^[0-9]+$' \
+            || fail "run_id must be numeric (got '$CONTROL_RUN_ID')"
+          echo "negative-control: base admission run $CONTROL_RUN_ID"
+
+      - name: 'Write fail-closed report skeleton'
+        run: |
+          set -euo pipefail
+          cat > negative-control-report.json <<'JSON'
+          {
+            "schema": "ax-evidence-negative-control/1",
+            "verdict": "FAIL",
+            "base_run_id": null,
+            "base_digest": null,
+            "controls": [],
+            "failures": ["not evaluated"]
+          }
+          JSON
+
+      - name: 'Download evidence artifact + propositions (archive bytes are the control base)'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::negative-control: $1" >&2; exit 1; }
+          mkdir -p base evidence
+          listing="$(gh api "repos/$GH_REPO/actions/runs/$CONTROL_RUN_ID/artifacts?per_page=100")" \
+            || fail "artifact listing failed for run $CONTROL_RUN_ID"
+          for name in ax-verify-evidence-propositions-A propositions; do
+            id="$(printf '%s' "$listing" | jq -r --arg n "$name" '.artifacts[] | select(.name == $n) | .id' | head -1)"
+            digest="$(printf '%s' "$listing" | jq -r --arg n "$name" '.artifacts[] | select(.name == $n) | .digest // empty' | head -1)"
+            [ -n "$id" ] || fail "artifact '$name' not found in run $CONTROL_RUN_ID"
+            gh api "repos/$GH_REPO/actions/artifacts/$id/zip" > "evidence/$name.zip" \
+              || fail "artifact archive download failed for '$name'"
+            if printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+              observed="sha256:$(sha256sum "evidence/$name.zip" | cut -d' ' -f1)"
+              [ "$observed" = "$digest" ] \
+                || fail "archive sha256 ($observed) != artifact API digest ($digest) for '$name'"
+              echo "negative-control: $name archive=$observed (API digest match)"
+            else
+              echo "negative-control: $name has no API digest (legacy artifact) — archive recorded without binding"
+            fi
+          done
+
+      - name: 'Acquire + verify pinned engine bundle (v0.6.6)'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: Archright/Axiom
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::negative-control-bundle: $1" >&2; exit 1; }
+          rel="${RUNNER_TEMP}/ax-release"
+          mkdir -p "$rel"
+          if ! ldconfig -p 2>/dev/null | grep -q 'libpcre\.so'; then
+            sudo apt-get -o DPkg::Lock::Timeout=300 update -qq \
+              && sudo apt-get -o DPkg::Lock::Timeout=300 install -y -qq libpcre3
+          fi
+          ldconfig -p | grep 'libpcre\.so\.3' >/dev/null || fail 'libpcre.so.3 absent after install'
+          command -v jq >/dev/null 2>&1 || {
+            sudo apt-get -o DPkg::Lock::Timeout=300 update -qq
+            sudo apt-get -o DPkg::Lock::Timeout=300 install -y -qq jq
+          }
+          command -v jq >/dev/null 2>&1 || fail 'jq unavailable'
+          gh release download "$AXIOM_VERSION_NORM" -R Archright/axiom-cli --dir "$rel" --clobber \
+            || fail "gh release download $AXIOM_VERSION_NORM from Archright/axiom-cli failed"
+          cd "$rel"
+          for f in SHA256SUMS manifest.json attestation-bundle.jsonl; do
+            [ -f "$f" ] || fail "release asset '$f' missing"
+          done
+          BUNDLE_TAR="$(ls axiom-bundle-*.tar.gz 2>/dev/null | head -1)"
+          [ -n "$BUNDLE_TAR" ] || fail 'no axiom-bundle-*.tar.gz asset in the release'
+          sha256sum -c SHA256SUMS || fail 'SHA256SUMS verification failed'
+          gh attestation verify "$BUNDLE_TAR" -R Archright/Axiom --bundle attestation-bundle.jsonl --signer-repo Archright/Axiom \
+            || fail 'gh attestation verify failed (signer-repo Archright/Axiom)'
+          mkdir -p "${RUNNER_TEMP}/ax-bundle"
+          tar -xzf "$BUNDLE_TAR" -C "${RUNNER_TEMP}/ax-bundle" || fail 'tar extraction failed'
+          anchor_count="$(find "${RUNNER_TEMP}/ax-bundle" -name '.axiom_root' | wc -l)"
+          [ "$anchor_count" -eq 1 ] \
+            || fail "expected exactly one .axiom_root anchor in the bundle, found $anchor_count"
+          BUNDLE_ROOT="$(dirname "$(find "${RUNNER_TEMP}/ax-bundle" -name '.axiom_root' -type f | head -1)")"
+          [ -f "$BUNDLE_ROOT/ax" ] || fail "ax binary missing at the bundle root ($BUNDLE_ROOT)"
+          version_out="$(cd "$BUNDLE_ROOT" && AXIOM_ROOT="$BUNDLE_ROOT" ./ax --version)" \
+            || fail 'ax --version execution failed at the bundle root'
+          version_out="$(printf '%s\n' "$version_out" | head -1 | tr -d '[:space:]')"
+          [ "$version_out" = "$AXIOM_VERSION_NORM" ] \
+            || fail "ax --version '$version_out' != $AXIOM_VERSION_NORM"
+          {
+            echo "AXIOM_BUNDLE_ROOT=$BUNDLE_ROOT"
+            echo "AXIOM_ROOT=$BUNDLE_ROOT"
+          } >> "$GITHUB_ENV"
+          echo "bundle: OK — root=$BUNDLE_ROOT ax --version=$version_out"
+
+      - name: 'Verify base provenance (attestation signer pinned)'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::negative-control-attestation: $1" >&2; exit 1; }
+          # --signer-repo and --signer-workflow are mutually exclusive in
+          # `gh attestation verify`; --signer-workflow alone pins the exact
+          # reusable workflow (owner/repo/path) that produced the attestation.
+          gh attestation verify evidence/ax-verify-evidence-propositions-A.zip \
+            -R "$GH_REPO" \
+            --signer-workflow Archright/axiom-cli/.github/workflows/ax-verify.yml \
+            --predicate-type 'https://github.com/Archright/Axiom/attestation/certificate-set/v1' \
+            --format json > evidence/attestation-A.json \
+            || fail 'base artifact attestation verification failed (not a genuine admission artifact)'
+          echo "negative-control: base attestation verified (signer=Archright/axiom-cli)"
+
+      - name: 'Run targeted negative controls (exact reasonCode per mutation)'
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import shutil
+          import subprocess
+          import sys
+          import zipfile
+
+          BASE_ZIP = "evidence/ax-verify-evidence-propositions-A.zip"
+          PROPOSALS_ZIP = "evidence/propositions.zip"
+          WORK = "negative-control"
+          AX = os.path.join(os.environ["AXIOM_BUNDLE_ROOT"], "ax")
+          RUN_ID = os.environ["CONTROL_RUN_ID"]
+
+          EXPECTED = [
+              ("body-removal", "CERT_BODY_MISSING"),
+              ("status-tamper", "CERT_STATUS_MISMATCH"),
+              ("digest-tamper", "CERT_SET_DIGEST_MISMATCH"),
+              ("observation-loss", "AXIOM_OBSERVATION_MISSING"),
+          ]
+
+          def canon(value):
+              return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+
+          def set_digest(manifest):
+              nodes = []
+              for entry in manifest["entries"]:
+                  name = entry.get("certificateFile")
+                  if not name:
+                      continue
+                  nodes.append({
+                      "file": name,
+                      "sha256": entry["certificateSha256"],
+                      "modulePath": entry["modulePath"],
+                      "functionName": entry["functionName"],
+                      "status": entry["status"],
+                      "recomputedStatus": entry["recomputedStatus"],
+                      "theoremIdentity": entry["theoremIdentity"],
+                      "axiomObservation": entry["axiomObservation"]["status"],
+                  })
+              nodes.sort(key=lambda node: node["file"])
+              payload = {"schema": "axiom.admission.cert-set.v1"}
+              if "scope" in manifest:
+                  payload["scope"] = manifest["scope"]
+              payload["certificates"] = nodes
+              return hashlib.sha256(canon(payload)).hexdigest()
+
+          def load(path):
+              with open(path, encoding="utf-8") as handle:
+                  return json.load(handle)
+
+          def save(path, manifest):
+              with open(path, "w", encoding="utf-8") as handle:
+                  json.dump(manifest, handle, ensure_ascii=False)
+                  handle.write("\n")
+
+          def verified_entry(manifest):
+              for entry in manifest.get("entries", []):
+                  if entry.get("certificateFile") and entry.get("status") == "certGreen":
+                      return entry
+              raise ValueError("base export carries no verified entry with a certificate body — cannot run body/observation controls")
+
+          def run_verify(bundle):
+              proc = subprocess.run(
+                  [AX, "cert", "verify-export", "--bundle", bundle,
+                   "--proposals", os.path.join(WORK, "propositions", "proposals.json"), "--json"],
+                  capture_output=True, text=True,
+                  env={**os.environ, "AXIOM_ROOT": os.environ["AXIOM_BUNDLE_ROOT"]},
+              )
+              try:
+                  parsed = json.loads(proc.stdout)
+              except ValueError:
+                  parsed = {}
+              return proc.returncode, parsed
+
+          controls = []
+          failures = []
+          try:
+              shutil.rmtree(WORK, ignore_errors=True)
+              os.makedirs(WORK, exist_ok=True)
+              with zipfile.ZipFile(BASE_ZIP) as archive:
+                  archive.extractall(os.path.join(WORK, "base"))
+              with zipfile.ZipFile(PROPOSALS_ZIP) as archive:
+                  archive.extractall(os.path.join(WORK, "propositions"))
+              base_vault = os.path.join(WORK, "base", "vault")
+              base_manifest = load(os.path.join(base_vault, "vault-manifest.json"))
+              base_digest = base_manifest.get("certificateSetDigest")
+              if not (isinstance(base_digest, str) and len(base_digest) == 64):
+                  raise ValueError("base manifest has no 64-hex certificateSetDigest")
+              if set_digest(base_manifest) != base_digest:
+                  raise ValueError("base manifest digest does not reproduce — control base is inconsistent")
+              code, parsed = run_verify(base_vault)
+              if code != 0 or parsed.get("verdict") != "PASS":
+                  raise ValueError(f"base bundle does not verify PASS (exit={code} verdict={parsed.get('verdict')} reasonCode={parsed.get('reasonCode')})")
+
+              def fresh(name):
+                  target = os.path.join(WORK, "copies", name)
+                  shutil.rmtree(target, ignore_errors=True)
+                  shutil.copytree(base_vault, target)
+                  return target
+
+              for name, expected in EXPECTED:
+                  bundle = fresh(name)
+                  manifest_path = os.path.join(bundle, "vault-manifest.json")
+                  manifest = load(manifest_path)
+                  entry = verified_entry(manifest)
+                  if name == "body-removal":
+                      body = os.path.join(bundle, entry["certificateFile"])
+                      os.remove(body)
+                      inventory = os.path.join(bundle, "vault-certificates.txt")
+                      with open(inventory, encoding="utf-8") as handle:
+                          kept = [line for line in handle.read().splitlines() if line != entry["certificateFile"]]
+                      with open(inventory, "w", encoding="utf-8") as handle:
+                          handle.write("\n".join(kept) + "\n")
+                      entry["certificateFile"] = None
+                      entry["certificateSha256"] = None
+                      entry["recomputedStatus"] = None
+                      entry["theoremIdentity"] = None
+                      entry["axiomObservation"] = {"status": "not-applicable", "names": None}
+                      manifest["certificateSetDigest"] = set_digest(manifest)
+                  elif name == "status-tamper":
+                      entry["recomputedStatus"] = "certZ3Candidate"
+                      manifest["certificateSetDigest"] = set_digest(manifest)
+                  elif name == "digest-tamper":
+                      manifest["certificateSetDigest"] = "f" * 64
+                  elif name == "observation-loss":
+                      body_path = os.path.join(bundle, entry["certificateFile"])
+                      body = load(body_path)
+                      if "axiomsUsed" not in body:
+                          raise ValueError("verified body carries no axiomsUsed — observation control is vacuous")
+                      del body["axiomsUsed"]
+                      raw = json.dumps(body, ensure_ascii=False).encode()
+                      with open(body_path, "wb") as handle:
+                          handle.write(raw)
+                      entry["certificateSha256"] = hashlib.sha256(raw).hexdigest()
+                      entry["axiomObservation"] = {"status": "not-observed", "names": None}
+                      manifest["certificateSetDigest"] = set_digest(manifest)
+                  else:
+                      raise ValueError(f"unknown control {name}")
+                  save(manifest_path, manifest)
+
+                  code, parsed = run_verify(bundle)
+                  observed = parsed.get("reasonCode")
+                  status = "PASS" if (code == 1 and observed == expected) else "FAIL"
+                  controls.append({
+                      "name": name,
+                      "expected_reason_code": expected,
+                      "observed_reason_code": observed,
+                      "exit": code,
+                      "status": status,
+                  })
+                  if status != "PASS":
+                      failures.append(f"{name}: exit={code} expected={expected} observed={observed}")
+
+              report = {
+                  "schema": "ax-evidence-negative-control/1",
+                  "verdict": "PASS" if not failures else "FAIL",
+                  "base_run_id": RUN_ID,
+                  "base_digest": base_digest,
+                  "controls": controls,
+                  "failures": failures,
+              }
+          except Exception as exc:  # noqa: BLE001 — fail-closed
+              report = {
+                  "schema": "ax-evidence-negative-control/1",
+                  "verdict": "FAIL",
+                  "base_run_id": RUN_ID,
+                  "base_digest": None,
+                  "controls": controls,
+                  "failures": failures + [str(exc)],
+              }
+          with open("negative-control-report.json", "w", encoding="utf-8") as handle:
+              json.dump(report, handle, indent=2, sort_keys=True)
+              handle.write("\n")
+          print(json.dumps(report, indent=2, sort_keys=True))
+          if report["verdict"] != "PASS":
+              sys.exit(1)
+          PY
+
+      - name: Upload negative-control report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ax-evidence-negative-control-report
+          path: negative-control-report.json
+          if-no-files-found: error
