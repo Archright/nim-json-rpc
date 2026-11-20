@@ -120,3 +120,5 @@ proc new*(
       err(RpcServerError)
     else:
       err(RpcApplicationError)
+
+# admission red control (#188): comment-only mutation, no semantic change.
