@@ -59,9 +59,32 @@ signer pinned to `Archright/axiom-cli/.github/workflows/ax-verify.yml`.
 
 ## Canonical-master run and negative controls
 
-This PR itself triggers a post-merge admission run on `master`
-(`5e676378660ea76f635ed3db9a7398dff251272b`). That run id is the control base
-for `ax-evidence-negative-control.yml`; results are appended here after the run.
+This PR triggers an admission run whose `pull_request` subject is the merge of
+this branch into `master` (`5e676378660ea76f635ed3db9a7398dff251272b`). That run
+is the control base for `ax-evidence-negative-control.yml`.
+
+- admission run: `44690942294` (head `c3eb84fa67b975ffeb50f5ae31845f6aefd705fc`,
+  conclusion `success`, `certificate-evidence` job `success`)
+- leg digests (equal): `f326af6710e9d6591bf74d34d0748ea202da17209781dae657055d3423020ca5`
+- artifact digests: A `sha256:b10c713d9c7070fd0fae44ac615635be2e02e69d17e17e8d510a2f9316d5a78b`,
+  B `sha256:9d479375bb312e4b0aafe5f433cac3e9bf4c55581c28985acb7f22e5f7a809f5`
+- all four evidence guards PASS: `CERTIFICATE_EVIDENCE`, `CERTIFICATE_INTEGRITY`,
+  `ARTIFACT_PROVENANCE`, `LEG_DIGEST_EQUALITY`
+
+Negative-control run `44695314036` (`ax-evidence-negative-control.yml`, base
+`44690942294`, base digest `f326af6710e9d6591bf74d34d0748ea202da17209781dae657055d3423020ca5`):
+verdict `PASS`, 4/4 controls rejected with the exact contract reason code.
+
+| mutation | expected | observed | exit |
+|---|---|---|---|
+| body-removal | `CERT_BODY_MISSING` | `CERT_BODY_MISSING` | 1 |
+| status-tamper | `CERT_STATUS_MISMATCH` | `CERT_STATUS_MISMATCH` | 1 |
+| digest-tamper | `CERT_SET_DIGEST_MISMATCH` | `CERT_SET_DIGEST_MISMATCH` | 1 |
+| observation-loss | `AXIOM_OBSERVATION_MISSING` | `AXIOM_OBSERVATION_MISSING` | 1 |
+
+Each copy breaks exactly one property while keeping the other integrity layers
+consistent, so the reason codes prove the intended guard fired instead of a
+generic digest failure.
 
 ## Non-claims
 
