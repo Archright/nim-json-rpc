@@ -3,9 +3,15 @@
 # APPLIED at P6 (2026-11-18) — adapted from the nim-libp2p admission workflow
 # (remote blob sha 3dd2a4f290df61b0c0735164323791102b26a69b, v2 classification
 # generation 2026-11-14). Application-time tokens are resolved: the engine
-# release is v0.6.5 (Archright/axiom-cli) and the jrpc wave-facing carrier is
+# release is v0.6.6 (Archright/axiom-cli) and the jrpc wave-facing carrier is
 # new_errclass_defect. An unresolved token would fail at queue time and prove
 # nothing — see the campaign README §7 runbook for the application order.
+#
+# RE-PINNED at C2 (2026-11-20, Axiom #188): engine v0.6.5 → v0.6.6. The six
+# token sites below moved together; the caller jobs gained the three
+# attestation permissions and the `certificate-evidence` job was added. The
+# P6 application itself shipped v0.6.5 — this is a forward re-pin, not a
+# rewrite of that history.
 #
 # Placement: this workflow lives in the SUBJECT repository
 # (Archright/nim-json-rpc, repository id 1460084333) because the admission
@@ -28,7 +34,7 @@
 # is no head.sha fallback.
 #
 # Resolved tokens (single-purpose; resolved at P6 application, 2026-11-18):
-#   v0.6.5  Axiom engine release tag (vX.Y.Z form; the tag must
+#   v0.6.6  Axiom engine release tag (vX.Y.Z form; the tag must
 #                      EXIST as an Archright/axiom-cli release). Sites:
 #                      verify-a/verify-b `uses:` refs (2), their
 #                      `axiom-version:` inputs (2), the mutation-contrast
@@ -60,7 +66,7 @@
 # literals must be edited together on any pin rotation.
 #
 # Legs: verify-a / verify-b are two SEPARATE jobs calling the pinned reusable
-# workflow Archright/axiom-cli/.github/workflows/ax-verify.yml@v0.6.5
+# workflow Archright/axiom-cli/.github/workflows/ax-verify.yml@v0.6.6
 # so each leg's reusable-workflow outputs are preserved in their own job
 # namespace (a matrix would collapse outputs to the last successful
 # execution). The green legs pin the PR subject (github.sha).
@@ -218,13 +224,21 @@ jobs:
   verify-a:
     if: ${{ github.repository == 'Archright/nim-json-rpc' }}
     needs: propositions
-    # v0.6.5 (site 1/6): the reusable adapter ref — a SHA or tag;
+    # Artifact attestation (#188 / contract §2.7): the called reusable
+    # workflow cannot escalate GITHUB_TOKEN, so the caller must grant the
+    # same three permissions its called job declares. contents: read stays.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    # v0.6.6 (site 1/6): the reusable adapter ref — a SHA or tag;
     # the tag form is pinned here because the engine release tag is the
     # authority the adapter itself downloads and verifies.
-    uses: Archright/axiom-cli/.github/workflows/ax-verify.yml@v0.6.5
+    uses: Archright/axiom-cli/.github/workflows/ax-verify.yml@v0.6.6
     with:
-      # v0.6.5 (site 2/6): adapter normalizes to the vX.Y.Z tag.
-      axiom-version: 'v0.6.5'
+      # v0.6.6 (site 2/6): adapter normalizes to the vX.Y.Z tag.
+      axiom-version: 'v0.6.6'
       subject-repository: 'Archright/nim-json-rpc'
       subject-commit: '${{ needs.propositions.outputs.subject_commit }}'
       proposals-artifact: 'propositions'
@@ -242,11 +256,17 @@ jobs:
   verify-b:
     if: ${{ github.repository == 'Archright/nim-json-rpc' }}
     needs: propositions
-    # v0.6.5 (site 3/6): see verify-a.
-    uses: Archright/axiom-cli/.github/workflows/ax-verify.yml@v0.6.5
+    # Artifact attestation (#188 / contract §2.7): see verify-a.
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    # v0.6.6 (site 3/6): see verify-a.
+    uses: Archright/axiom-cli/.github/workflows/ax-verify.yml@v0.6.6
     with:
-      # v0.6.5 (site 4/6): see verify-a.
-      axiom-version: 'v0.6.5'
+      # v0.6.6 (site 4/6): see verify-a.
+      axiom-version: 'v0.6.6'
       subject-repository: 'Archright/nim-json-rpc'
       subject-commit: '${{ needs.propositions.outputs.subject_commit }}'
       proposals-artifact: 'propositions'
@@ -272,10 +292,10 @@ jobs:
     steps:
       - name: 'Validate contract inputs (fail-closed pins)'
         env:
-          # v0.6.5 (site 5/6): the mutation leg acquires the SAME
+          # v0.6.6 (site 5/6): the mutation leg acquires the SAME
           # engine release as the green legs — normalized below exactly as
           # the adapter does (v-prefix + ^v\d+\.\d+\.\d+$ + length gate).
-          AXIOM_VERSION_RAW: 'v0.6.5'
+          AXIOM_VERSION_RAW: 'v0.6.6'
         run: |
           set -euo pipefail
           fail() { echo "::error::validate: $1" >&2; exit 1; }
@@ -575,7 +595,7 @@ jobs:
           export MUTATION_EVIDENCE_DIR="$evidence"
           # The HONEST overlay ships inside the engine bundle's spec catalog —
           # the same catalog the green legs' engine resolves JRPC-ERRCLASS
-          # from (the v0.6.5 ship must carry it; see README REVIEW items).
+          # from (the v0.6.6 ship must carry it; see README REVIEW items).
           [ -f "$HONEST_OVERLAY_PATH" ] \
             || fail "engine spec catalog overlay missing in the bundle: $HONEST_OVERLAY_PATH (does the shipped engine carry config/spec/json_rpc_errcode_class.json?)"
           python3 - <<'PY'
@@ -915,7 +935,7 @@ jobs:
 
           # recorded (not asserted): the runOutcome projection and any vault
           # certificates the red run produced — diagnostics for reconciling
-          # the red-run state shape with the v0.6.5 shipped engine.
+          # the red-run state shape with the v0.6.6 shipped engine.
           run_outcome = state.get("runOutcome") if isinstance(state.get("runOutcome"), dict) else {}
           vault_entries = []
           vault_path = os.path.join(os.environ.get("AXIOM_STATE_DIR", ""), "build", "certificates", "manifest.json")
@@ -1032,6 +1052,361 @@ jobs:
             echo "| evidence artifact | \`mutation-contrast-evidence\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
+  certificate-evidence:
+    # CERTIFICATE_EVIDENCE (#188) — contract docs/spec/admission_evidence_export_contract.md
+    # §2.6-§2.7, §3.1. The consumer never trusts the producer's projection:
+    #   (1) artifact archive bytes == GitHub artifact API digest,
+    #   (2) GitHub attestation binds those bytes to this run and to the pinned
+    #       axiom-cli signer workflow (provenance authority = GitHub),
+    #   (3) the pinned engine re-derives the tier from the exported certificate
+    #       bodies and re-checks scope/inventory/observations/digests,
+    #   (4) the producer's closure record is bound to the same semantic digest,
+    #   (5) leg A and leg B carry the same certificateSetDigest.
+    # Fail-closed: any missing artifact, archive, attestation, body, record or
+    # digest is FAIL. This guard never replaces CERTIFICATE_INTEGRITY; it adds
+    # the evidence-completeness layer on top of the existing checks.
+    if: ${{ !cancelled() && github.repository == 'Archright/nim-json-rpc' }}
+    needs: [propositions, verify-a, verify-b]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      actions: read        # artifact archive download (attestation subjects)
+      attestations: read   # gh attestation verify
+      contents: read
+    steps:
+      - name: 'Write fail-closed report skeleton'
+        run: |
+          set -euo pipefail
+          cat > certificate-evidence-report.json <<'JSON'
+          {
+            "schema": "certificate-evidence-report/1",
+            "verdict": "FAIL",
+            "evidence_tier": "not-verified",
+            "certificate_set_digest": null,
+            "guards": {
+              "CERTIFICATE_EVIDENCE": {"status": "FAIL", "detail": "not evaluated"},
+              "CERTIFICATE_INTEGRITY": {"status": "FAIL", "detail": "not evaluated"},
+              "ARTIFACT_PROVENANCE": {"status": "FAIL", "detail": "not evaluated"},
+              "LEG_DIGEST_EQUALITY": {"status": "FAIL", "detail": "not evaluated"}
+            },
+            "leg_digests": {},
+            "artifact_digests": {},
+            "failures": ["not evaluated"]
+          }
+          JSON
+
+      - name: 'Download evidence artifacts (archive bytes are the attestation subject)'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: Archright/nim-json-rpc
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::cert-evidence: $1" >&2; exit 1; }
+          mkdir -p evidence
+          listing="$(gh api "repos/$GH_REPO/actions/runs/$RUN_ID/artifacts?per_page=100")" \
+            || fail "artifact listing failed for run $RUN_ID"
+          for leg in A B; do
+            name="ax-verify-evidence-propositions-$leg"
+            id="$(printf '%s' "$listing" | jq -r --arg n "$name" '.artifacts[] | select(.name == $n) | .id' | head -1)"
+            digest="$(printf '%s' "$listing" | jq -r --arg n "$name" '.artifacts[] | select(.name == $n) | .digest // empty' | head -1)"
+            [ -n "$id" ] || fail "artifact '$name' not found in run $RUN_ID — the producer leg uploaded no evidence"
+            printf '%s' "$digest" | grep -Eq '^sha256:[0-9a-f]{64}$' \
+              || fail "artifact '$name' carries no sha256 API digest (got '$digest')"
+            gh api "repos/$GH_REPO/actions/artifacts/$id/zip" > "evidence/$name.zip" \
+              || fail "artifact archive download failed for '$name' (id=$id)"
+            observed="sha256:$(sha256sum "evidence/$name.zip" | cut -d' ' -f1)"
+            [ "$observed" = "$digest" ] \
+              || fail "archive sha256 ($observed) != artifact API digest ($digest) for '$name'"
+            echo "cert-evidence: $name archive=$observed (API digest match)"
+          done
+
+      - name: 'Acquire + verify pinned engine bundle (v0.6.6)'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: Archright/Axiom
+          AXIOM_VERSION_NORM: 'v0.6.6'
+          AXIOM_VERSION_PLAIN: '0.6.6'
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::cert-evidence-bundle: $1" >&2; exit 1; }
+          rel="${RUNNER_TEMP}/ax-release"
+          mkdir -p "$rel"
+          if ! ldconfig -p 2>/dev/null | grep -q 'libpcre\.so'; then
+            sudo apt-get -o DPkg::Lock::Timeout=300 update -qq \
+              && sudo apt-get -o DPkg::Lock::Timeout=300 install -y -qq libpcre3
+          fi
+          ldconfig -p | grep 'libpcre\.so\.3' >/dev/null || fail 'libpcre.so.3 absent after install'
+          command -v jq >/dev/null 2>&1 || {
+            sudo apt-get -o DPkg::Lock::Timeout=300 update -qq
+            sudo apt-get -o DPkg::Lock::Timeout=300 install -y -qq jq
+          }
+          command -v jq >/dev/null 2>&1 || fail 'jq unavailable'
+          gh release download "$AXIOM_VERSION_NORM" -R Archright/axiom-cli --dir "$rel" --clobber \
+            || fail "gh release download $AXIOM_VERSION_NORM from Archright/axiom-cli failed"
+          cd "$rel"
+          for f in SHA256SUMS manifest.json attestation-bundle.jsonl; do
+            [ -f "$f" ] || fail "release asset '$f' missing"
+          done
+          BUNDLE_TAR="$(ls axiom-bundle-*.tar.gz 2>/dev/null | head -1)"
+          [ -n "$BUNDLE_TAR" ] || fail 'no axiom-bundle-*.tar.gz asset in the release'
+          sha256sum -c SHA256SUMS || fail 'SHA256SUMS verification failed'
+          gh attestation verify "$BUNDLE_TAR" -R Archright/Axiom --bundle attestation-bundle.jsonl --signer-repo Archright/Axiom \
+            || fail 'gh attestation verify failed (signer-repo Archright/Axiom)'
+          mkdir -p "${RUNNER_TEMP}/ax-bundle"
+          tar -xzf "$BUNDLE_TAR" -C "${RUNNER_TEMP}/ax-bundle" || fail 'tar extraction failed'
+          anchor_count="$(find "${RUNNER_TEMP}/ax-bundle" -name '.axiom_root' | wc -l)"
+          [ "$anchor_count" -eq 1 ] \
+            || fail "expected exactly one .axiom_root anchor in the bundle, found $anchor_count"
+          BUNDLE_ROOT="$(dirname "$(find "${RUNNER_TEMP}/ax-bundle" -name '.axiom_root' -type f | head -1)")"
+          [ -f "$BUNDLE_ROOT/ax" ] || fail "ax binary missing at the bundle root ($BUNDLE_ROOT)"
+          BUNDLE_SHA="$(sha256sum "$BUNDLE_TAR" | cut -d' ' -f1)"
+          BIN_SHA="$(sha256sum "$BUNDLE_ROOT/ax" | cut -d' ' -f1)"
+          m="$rel/manifest.json"
+          jq -e --arg sv 'axiom.release-bundle.manifest.v1' '.schemaVersion == $sv' "$m" >/dev/null \
+            || fail 'manifest schemaVersion is not axiom.release-bundle.manifest.v1'
+          jq -e --arg p 'linux-x86_64' '.platform == $p' "$m" >/dev/null \
+            || fail 'manifest platform is not linux-x86_64'
+          jq -e --arg t "$AXIOM_VERSION_NORM" '.tag == $t' "$m" >/dev/null \
+            || fail "manifest tag != $AXIOM_VERSION_NORM"
+          jq -e --arg v "$AXIOM_VERSION_PLAIN" '.version == $v' "$m" >/dev/null \
+            || fail "manifest version != $AXIOM_VERSION_PLAIN"
+          jq -e --arg bt "$BUNDLE_TAR" '.bundlePath == $bt' "$m" >/dev/null \
+            || fail 'manifest bundlePath does not match the downloaded asset name'
+          jq -e --arg bs "$BUNDLE_SHA" '.bundleSha256 == $bs' "$m" >/dev/null \
+            || fail "manifest bundleSha256 != observed sha256 ($BUNDLE_SHA)"
+          jq -e --arg ns "$BIN_SHA" '.binarySha256 == $ns' "$m" >/dev/null \
+            || fail "manifest binarySha256 != observed ax sha256 ($BIN_SHA)"
+          version_out="$(cd "$BUNDLE_ROOT" && AXIOM_ROOT="$BUNDLE_ROOT" ./ax --version)" \
+            || fail 'ax --version execution failed at the bundle root'
+          version_out="$(printf '%s\n' "$version_out" | head -1 | tr -d '[:space:]')"
+          [ "$version_out" = "$AXIOM_VERSION_NORM" ] \
+            || fail "ax --version '$version_out' != $AXIOM_VERSION_NORM"
+          {
+            echo "AXIOM_BUNDLE_ROOT=$BUNDLE_ROOT"
+            echo "AXIOM_BUNDLE_SHA256=$BUNDLE_SHA"
+            echo "AXIOM_TARBALL_NAME=$BUNDLE_TAR"
+            echo "AXIOM_VERSION_NORM=$AXIOM_VERSION_NORM"
+          } >> "$GITHUB_ENV"
+          echo "bundle: OK — root=$BUNDLE_ROOT bundleSha256=$BUNDLE_SHA ax --version=$version_out"
+
+      - name: 'Download propositions artifact (claim scope authority)'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: propositions
+          path: propositions
+
+      - name: 'Verify artifact attestations (GitHub provenance authority)'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: Archright/nim-json-rpc
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::cert-evidence-attestation: $1" >&2; exit 1; }
+          for leg in A B; do
+            zip="evidence/ax-verify-evidence-propositions-$leg.zip"
+            gh attestation verify "$zip" \
+              -R "$GH_REPO" \
+              --signer-repo Archright/axiom-cli \
+              --signer-workflow Archright/axiom-cli/.github/workflows/ax-verify.yml \
+              --predicate-type 'https://github.com/Archright/Axiom/attestation/certificate-set/v1' \
+              --format json > "evidence/attestation-$leg.json" \
+              || fail "attestation verification failed for leg $leg (signer must be Archright/axiom-cli/.github/workflows/ax-verify.yml)"
+            echo "cert-evidence: leg $leg attestation verified (signer=Archright/axiom-cli)"
+          done
+
+      - name: 'Re-derive certificate evidence with the pinned engine (fail-closed)'
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import shutil
+          import subprocess
+          import sys
+          import zipfile
+
+          LEGS = {"A": "legs/A", "B": "legs/B"}
+          ZIP = {leg: f"evidence/ax-verify-evidence-propositions-{leg}.zip" for leg in LEGS}
+          ATTESTATION = {leg: f"evidence/attestation-{leg}.json" for leg in LEGS}
+          PREDICATE_TYPE = "https://github.com/Archright/Axiom/attestation/certificate-set/v1"
+          PREDICATE_SCHEMA = "axiom.admission.certificate-set-predicate.v1"
+          PROPOSALS = "propositions/proposals.json"
+          BUNDLE = os.environ["AXIOM_BUNDLE_ROOT"]
+          AX = os.path.join(BUNDLE, "ax")
+          HEX64 = set("0123456789abcdef")
+
+          guards = {
+              "CERTIFICATE_EVIDENCE": {"status": "FAIL", "detail": "not evaluated"},
+              "CERTIFICATE_INTEGRITY": {"status": "FAIL", "detail": "not evaluated"},
+              "ARTIFACT_PROVENANCE": {"status": "FAIL", "detail": "not evaluated"},
+              "LEG_DIGEST_EQUALITY": {"status": "FAIL", "detail": "not evaluated"},
+          }
+          failures = []
+          leg_digests = {}
+          artifact_digests = {}
+
+          def fail(guard, detail):
+              guards[guard] = {"status": "FAIL", "detail": detail}
+              failures.append(f"{guard}: {detail}")
+
+          def ok(guard, detail=""):
+              guards[guard] = {"status": "PASS", "detail": detail}
+
+          # Reaching this step means the archive/API digest comparison and
+          # `gh attestation verify` (signer pinned to axiom-cli) succeeded in
+          # the preceding steps: provenance is established independently of
+          # the semantic checks below.
+          ok("ARTIFACT_PROVENANCE", "archive digest == API digest; attestation signer pinned (Archright/axiom-cli)")
+
+          def sha256_file(path):
+              digest = hashlib.sha256()
+              with open(path, "rb") as handle:
+                  for chunk in iter(lambda: handle.read(1 << 20), b""):
+                      digest.update(chunk)
+              return digest.hexdigest()
+
+          def sha256_hex(value):
+              return isinstance(value, str) and len(value) == 64 and set(value) <= HEX64
+
+          def load_json(path):
+              with open(path, encoding="utf-8") as handle:
+                  return json.load(handle)
+
+          def find_predicate(attestations, leg):
+              """The statement is bound to the certificate by the attestation API,
+              not by the producer; extract the custom predicate defensively."""
+              if not isinstance(attestations, list):
+                  raise ValueError(f"leg {leg}: attestation output is not a JSON array")
+              for entry in attestations:
+                  result = entry.get("verificationResult") if isinstance(entry, dict) else None
+                  statement = result.get("statement") if isinstance(result, dict) else None
+                  if not isinstance(statement, dict):
+                      continue
+                  if statement.get("predicateType") != PREDICATE_TYPE:
+                      continue
+                  predicate = statement.get("predicate")
+                  if isinstance(predicate, dict):
+                      return predicate
+              raise ValueError(f"leg {leg}: no attestation with predicateType {PREDICATE_TYPE}")
+
+          def verify_export(leg, vault):
+              proc = subprocess.run(
+                  [AX, "cert", "verify-export", "--bundle", vault,
+                   "--proposals", PROPOSALS, "--json"],
+                  capture_output=True, text=True, env={**os.environ, "AXIOM_ROOT": BUNDLE},
+              )
+              if proc.returncode != 0:
+                  raise ValueError(
+                      f"leg {leg}: verify-export exit {proc.returncode}: "
+                      f"{proc.stdout.strip()[:400] or proc.stderr.strip()[:400]}"
+                  )
+              return json.loads(proc.stdout)
+
+          try:
+              os.makedirs(PROPOSALS.rsplit("/", 1)[0], exist_ok=True)
+              if not os.path.isfile(PROPOSALS):
+                  raise ValueError(f"propositions artifact missing at {PROPOSALS}")
+
+              manifest_digests = {}
+              for leg, base in LEGS.items():
+                  # Extract into a clean directory: the evidence set is exactly
+                  # the archive's entries — no stale file from a prior attempt
+                  # may survive into the semantic checks.
+                  if os.path.isdir(base):
+                      shutil.rmtree(base)
+                  os.makedirs(base)
+                  with zipfile.ZipFile(ZIP[leg]) as archive:
+                      archive.extractall(base)
+                  vault = os.path.join(base, "vault")
+                  manifest_path = os.path.join(vault, "vault-manifest.json")
+                  if not os.path.isfile(manifest_path):
+                      raise ValueError(f"leg {leg}: exported bundle has no vault-manifest.json")
+                  manifest = load_json(manifest_path)
+                  digest = manifest.get("certificateSetDigest")
+                  if not sha256_hex(digest):
+                      raise ValueError(f"leg {leg}: manifest certificateSetDigest is not 64-hex")
+                  manifest_digests[leg] = digest
+
+                  out = verify_export(leg, vault)
+                  if out.get("verdict") != "PASS":
+                      raise ValueError(f"leg {leg}: verify-export verdict={out.get('verdict')} reasonCode={out.get('reasonCode')}")
+                  if out.get("certificateBodiesPresent") is not True:
+                      raise ValueError(f"leg {leg}: certificateBodiesPresent is not true")
+                  if out.get("certificateSetDigest") != digest:
+                      raise ValueError(
+                          f"leg {leg}: re-derived digest {out.get('certificateSetDigest')} != manifest {digest}"
+                      )
+
+                  producer_export = os.path.join(base, "cert-export.json")
+                  if not os.path.isfile(producer_export):
+                      raise ValueError(f"leg {leg}: producer cert-export.json missing")
+                  if load_json(producer_export).get("certificateSetDigest") != digest:
+                      raise ValueError(f"leg {leg}: cert-export.json digest != manifest digest")
+
+                  closure_path = os.path.join(base, "cert-export-verification.json")
+                  if not os.path.isfile(closure_path):
+                      raise ValueError(f"leg {leg}: producer closure record missing (CERTIFICATE_INTEGRITY)")
+                  closure = load_json(closure_path)
+                  if closure.get("verdict") != "PASS" or closure.get("closure") != "executed":
+                      raise ValueError(
+                          f"leg {leg}: producer closure not executed/PASS: verdict={closure.get('verdict')} closure={closure.get('closure')}"
+                      )
+                  if closure.get("certificateSetDigest") != digest:
+                      raise ValueError(f"leg {leg}: closure record digest != manifest digest")
+
+                  predicate = find_predicate(load_json(ATTESTATION[leg]), leg)
+                  if predicate.get("schema") != PREDICATE_SCHEMA:
+                      raise ValueError(f"leg {leg}: predicate schema {predicate.get('schema')!r} != {PREDICATE_SCHEMA}")
+                  if predicate.get("certificateSetDigest") != digest:
+                      raise ValueError(f"leg {leg}: predicate certificateSetDigest != manifest digest")
+                  inventory_path = os.path.join(vault, "vault-certificates.txt")
+                  if not os.path.isfile(inventory_path):
+                      raise ValueError(f"leg {leg}: vault-certificates.txt missing")
+                  if predicate.get("vaultInventorySha256") != sha256_file(inventory_path):
+                      raise ValueError(f"leg {leg}: predicate inventory sha256 != vault-certificates.txt")
+
+                  leg_digests[leg] = digest
+                  artifact_digests[leg] = "sha256:" + sha256_file(ZIP[leg])
+
+              ok("CERTIFICATE_EVIDENCE", "verify-export re-derived PASS on both legs from exported bodies")
+              ok("CERTIFICATE_INTEGRITY", "producer closure executed/PASS bound to certificateSetDigest on both legs")
+
+              if leg_digests.get("A") != leg_digests.get("B"):
+                  fail("LEG_DIGEST_EQUALITY", f"leg digests differ: A={leg_digests.get('A')} B={leg_digests.get('B')}")
+              else:
+                  ok("LEG_DIGEST_EQUALITY", f"A == B == {leg_digests.get('A')}")
+          except Exception as exc:  # noqa: BLE001 — every failure is fail-closed
+              fail("CERTIFICATE_EVIDENCE", str(exc))
+
+          verdict = "PASS" if not failures and all(g["status"] == "PASS" for g in guards.values()) else "FAIL"
+          report = {
+              "schema": "certificate-evidence-report/1",
+              "verdict": verdict,
+              "evidence_tier": "verified" if verdict == "PASS" else "not-verified",
+              "certificate_set_digest": leg_digests.get("A") if verdict == "PASS" else None,
+              "guards": guards,
+              "leg_digests": leg_digests,
+              "artifact_digests": artifact_digests,
+              "failures": failures,
+          }
+          with open("certificate-evidence-report.json", "w", encoding="utf-8") as handle:
+              json.dump(report, handle, indent=2, sort_keys=True)
+              handle.write("\n")
+          print(json.dumps({"verdict": verdict, "guards": {k: v["status"] for k, v in guards.items()}}, sort_keys=True))
+          if verdict != "PASS":
+              sys.exit(1)
+          PY
+
+      - name: Upload certificate evidence report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: certificate-evidence-report
+          path: certificate-evidence-report.json
+          if-no-files-found: error
+
   admission-integrity:
     # The 7 guards and the v2 classification are UNCHANGED from the
     # nim-libp2p precedent — they adjudicate legs A/B only. mutation-contrast
@@ -1071,10 +1446,10 @@ jobs:
           import sys
 
           EXPECTED_REPO = "Archright/nim-json-rpc"
-          # v0.6.5 (site 6/6): tag-form token. The adapter records
+          # v0.6.6 (site 6/6): tag-form token. The adapter records
           # AXIOM_VERSION_PLAIN (v-stripped) in verify-record.json — strip the
           # v-prefix here for parity with that recorded field.
-          EXPECTED_AXIOM_VERSION = "v0.6.5"
+          EXPECTED_AXIOM_VERSION = "v0.6.6"
           if EXPECTED_AXIOM_VERSION.startswith("v"):
               EXPECTED_AXIOM_VERSION = EXPECTED_AXIOM_VERSION[1:]
           EXPECTED_SUBJECT_COMMIT = os.environ.get("EXPECTED_SUBJECT_COMMIT", "")
@@ -1503,7 +1878,7 @@ jobs:
 
   subject-verdict:
     if: ${{ !cancelled() && github.repository == 'Archright/nim-json-rpc' }}
-    needs: [propositions, admission-integrity]
+    needs: [propositions, admission-integrity, certificate-evidence]
     runs-on: ubuntu-24.04
     steps:
       - name: Download admission integrity report
@@ -1512,6 +1887,13 @@ jobs:
         with:
           name: admission-integrity-report
           path: integrity
+
+      - name: Download certificate evidence report (CERTIFICATE_EVIDENCE)
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: certificate-evidence-report
+          path: cert-evidence
 
       - name: Download evidence leg A (engine context only — no re-adjudication)
         continue-on-error: true
@@ -1536,6 +1918,7 @@ jobs:
           import sys
 
           REPORT_PATH = "integrity/admission-integrity-report.json"
+          CERT_REPORT_PATH = "cert-evidence/certificate-evidence-report.json"
           LEG_BASES = {"A": "legs/A", "B": "legs/B"}
 
           def pr_metadata():
@@ -1604,6 +1987,7 @@ jobs:
                   "classification": classification,
                   "acceptance_class": report.get("acceptance_class"),
                   "evidence_tier": report.get("evidence_tier"),
+                  "certificate_set_digest": report.get("certificate_set_digest"),
                   "integrity_status": integrity,
                   "violated_guards": violated,
                   "guards": guards,
@@ -1635,6 +2019,7 @@ jobs:
                   f"- classification: {classification}",
                   f"- acceptance class: {report.get('acceptance_class')}",
                   f"- evidence tier: {report.get('evidence_tier')}",
+                  f"- certificate_set_digest: `{report.get('certificate_set_digest')}`",
                   f"- canonical_digest A: `{digest_a}`",
                   f"- canonical_digest B: `{digest_b}`",
                   f"- subject commit: `{subject_commit}`",
@@ -1675,6 +2060,44 @@ jobs:
           if integrity != "PASS" or violated:
               detail = ", ".join(violated) if violated else "integrity is not PASS"
               write_outputs("FAIL", "(evidence integrity)", f"FAIL (evidence integrity): {detail}", report)
+              sys.exit(1)
+
+          # CERTIFICATE_EVIDENCE (#188): the evidence tier is "verified" only
+          # when the tier was re-derived from the exported bodies, the producer
+          # closure is bound to the same digest, the artifact provenance is
+          # attested, and both legs agree. A missing or failed report can never
+          # be promoted to PASS (fail-closed, contract §2.6/§2.6a).
+          cert_report = None
+          if os.path.exists(CERT_REPORT_PATH):
+              try:
+                  with open(CERT_REPORT_PATH, encoding="utf-8") as handle:
+                      loaded = json.load(handle)
+                  if isinstance(loaded, dict):
+                      cert_report = loaded
+              except (OSError, ValueError):
+                  cert_report = None
+          if not isinstance(report.get("guards"), dict):
+              report["guards"] = {}
+          if cert_report is None:
+              report["guards"].update({
+                  "CERTIFICATE_EVIDENCE": {"status": "FAIL", "detail": "certificate-evidence-report.json missing or unreadable"}
+              })
+              write_outputs("FAIL", "(certificate evidence)", "FAIL (certificate evidence): certificate-evidence-report.json missing or unreadable", report)
+              sys.exit(1)
+          cert_guards = cert_report.get("guards") if isinstance(cert_report.get("guards"), dict) else {}
+          report["guards"].update(cert_guards)
+          report["evidence_tier"] = cert_report.get("evidence_tier")
+          report["certificate_set_digest"] = cert_report.get("certificate_set_digest")
+          cert_failed = [
+              name for name, value in cert_guards.items()
+              if not (isinstance(value, dict) and value.get("status") == "PASS")
+          ]
+          if cert_failed:
+              write_outputs("FAIL", "(certificate evidence)", f"FAIL (certificate evidence): {', '.join(sorted(cert_failed))}", report)
+              sys.exit(1)
+          provenance = cert_guards.get("ARTIFACT_PROVENANCE") if isinstance(cert_guards.get("ARTIFACT_PROVENANCE"), dict) else {}
+          if report.get("acceptance_class") == "proof" and provenance.get("status") != "PASS":
+              write_outputs("FAIL", "(provenance)", "FAIL (provenance): acceptance_class=proof requires ARTIFACT_PROVENANCE PASS", report)
               sys.exit(1)
 
           classification = report.get("classification")
