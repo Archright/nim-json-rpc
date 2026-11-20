@@ -1205,9 +1205,11 @@ jobs:
           fail() { echo "::error::cert-evidence-attestation: $1" >&2; exit 1; }
           for leg in A B; do
             zip="evidence/ax-verify-evidence-propositions-$leg.zip"
+            # --signer-repo and --signer-workflow are mutually exclusive in
+            # `gh attestation verify`; --signer-workflow alone pins the exact
+            # reusable workflow (owner/repo/path) that produced the attestation.
             gh attestation verify "$zip" \
               -R "$GH_REPO" \
-              --signer-repo Archright/axiom-cli \
               --signer-workflow Archright/axiom-cli/.github/workflows/ax-verify.yml \
               --predicate-type 'https://github.com/Archright/Axiom/attestation/certificate-set/v1' \
               --format json > "evidence/attestation-$leg.json" \
